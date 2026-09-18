@@ -1,0 +1,2 @@
+import test from"node:test";import assert from"node:assert/strict";import{resolveEmailThread}from"./threading.js";
+test("email threading prefers In-Reply-To then References",()=>{const ids=new Map([["<root@x>","conversation-1"]]);assert.equal(resolveEmailThread({inReplyTo:"<missing>",references:["<root@x>"]},id=>ids.get(id)??null),"conversation-1");assert.equal(resolveEmailThread({inReplyTo:"<root@x>"},id=>ids.get(id)??null),"conversation-1");});

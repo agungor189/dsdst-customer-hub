@@ -1,0 +1,3 @@
+import { randomUUID } from "node:crypto";
+import express from "express";import type Database from "better-sqlite3";import { tagSchema } from "../../shared/schemas/api.js";import { requirePermission } from "../auth/middleware.js";
+export function createTagRouter(db:Database.Database){const router=express.Router();router.get("/",(_q,res)=>res.json({items:db.prepare("SELECT * FROM tags ORDER BY name").all()}));router.post("/",requirePermission("customer_hub:manage_tags"),(req,res)=>{const p=tagSchema.safeParse(req.body);if(!p.success)return res.status(400).json({error:{code:"VALIDATION_ERROR"}});const id=randomUUID();db.prepare("INSERT INTO tags(id,name,color) VALUES(?,?,?)").run(id,p.data.name,p.data.color);res.status(201).json({id,...p.data});});return router;}

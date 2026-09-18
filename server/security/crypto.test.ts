@@ -1,0 +1,3 @@
+import test from"node:test";import assert from"node:assert/strict";import{decryptSecret,encryptSecret,redact}from"./crypto.js";
+test("AES-256-GCM credentials round-trip and reject wrong keys",()=>{const key=Buffer.alloc(32,1),other=Buffer.alloc(32,2);const encoded=encryptSecret({access_token:"very-secret"},key);assert.ok(!encoded.includes("very-secret"));assert.deepEqual(decryptSecret(encoded,key),{access_token:"very-secret"});assert.throws(()=>decryptSecret(encoded,other));});
+test("audit redaction removes nested secrets",()=>assert.deepEqual(redact({token:"x",nested:{api_key:"y",safe:"ok"}}),{token:"[REDACTED]",nested:{api_key:"[REDACTED]",safe:"ok"}}));

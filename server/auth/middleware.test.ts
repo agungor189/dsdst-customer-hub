@@ -1,0 +1,3 @@
+import test from"node:test";import assert from"node:assert/strict";import{hasPermission}from"./middleware.js";
+test("admin has every Customer Hub permission",()=>assert.equal(hasPermission({id:"1",username:"a",role:"admin",permissions:{}},"customer_hub:manage_channels"),true));
+test("readonly can view only when explicitly granted and can never reply",()=>{const user={id:"1",username:"r",role:"readonly" as const,permissions:{"customer_hub:view":true,"customer_hub:reply":true}};assert.equal(hasPermission(user,"customer_hub:view"),true);assert.equal(hasPermission(user,"customer_hub:reply"),false);});

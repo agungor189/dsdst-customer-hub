@@ -1,0 +1,2 @@
+import test from"node:test";import assert from"node:assert/strict";import{createAdapterRegistry}from"./registry.js";import{testConfig}from"../../test-utils.js";
+test("adapter capabilities hide unsupported Manual reply",()=>{const registry=createAdapterRegistry(testConfig());assert.equal(registry.get("MANUAL_EXTERNAL").capabilities.has("SEND_MESSAGES"),false);assert.equal(registry.get("TRENDYOL").capabilities.has("PRODUCT_QUESTIONS"),true);assert.equal(registry.get("META_WHATSAPP").capabilities.has("WEBHOOK"),true);});
