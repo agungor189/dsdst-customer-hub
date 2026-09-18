@@ -1,0 +1,38 @@
+services:
+  dsdst-customer-hub:
+    build: .
+    image: dsdst/customer-hub:${CUSTOMER_HUB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    volumes:
+      - ${CUSTOMER_HUB_DATA_DIR:-customer_hub_data}:/data
+    environment:
+      NODE_ENV: production
+      PORT: 3100
+      APP_ORIGIN: ${CUSTOMER_HUB_APP_ORIGIN}
+      PANEL_BASE_URL: http://panel:3000
+      CUSTOMER_HUB_ENCRYPTION_KEY: ${CUSTOMER_HUB_ENCRYPTION_KEY}
+      SESSION_SECURE: "true"
+      META_APP_SECRET: ${CUSTOMER_HUB_META_APP_SECRET:-}
+      META_WEBHOOK_VERIFY_TOKEN: ${CUSTOMER_HUB_META_WEBHOOK_VERIFY_TOKEN:-}
+    ports:
+      - ${CUSTOMER_HUB_PORT:-3100}:3100
+    networks:
+      - edge
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  customer_hub_data:
+
+networks:
+  edge:
+    external: true
+  internal:
+    external: true
+    name: dsdst-internal
