@@ -11,8 +11,14 @@ async function panelFetch(config: AppConfig, path: string, init: RequestInit) {
   }
 }
 
+const serviceHeaders = (config: AppConfig, token?: string) => ({
+  "x-api-key": config.panelServiceApiKey,
+  ...(token ? { authorization: `Bearer ${token}` } : {}),
+});
+
 export async function panelLogin(config: AppConfig, username: string, password: string): Promise<{token: string; user: PanelUser}> {
-  const response = await panelFetch(config, "/api/auth/login", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({username,password}) });
+  const response = await panelFetch(config, "/api/auth/service/login", { method: "POST",
+    headers: { "content-type": "application/json", ...serviceHeaders(config) }, body: JSON.stringify({username,password}) });
   const body = await response.json() as any;
   if (!response.ok || !body.token) throw Object.assign(new Error(body?.error?.message ?? "Giriş başarısız"), { status: response.status });
   const user = await panelMe(config, body.token);
@@ -20,10 +26,18 @@ export async function panelLogin(config: AppConfig, username: string, password: 
 }
 
 export async function panelMe(config: AppConfig, token: string): Promise<PanelUser> {
-  const response = await panelFetch(config, "/api/auth/me", { headers: { authorization: `Bearer ${token}` } });
+  const response = await panelFetch(config, "/api/auth/service/me", { headers: serviceHeaders(config, token) });
   const body = await response.json() as any;
   if (!response.ok || !body.user) throw Object.assign(new Error(body?.error?.message ?? "Oturum geçersiz"), { status: response.status });
   return body.user;
+}
+
+export async function panelLogout(config: AppConfig, token: string): Promise<void> {
+  const response = await panelFetch(config, "/api/auth/service/logout", { method: "POST", headers: serviceHeaders(config, token) });
+  if (!response.ok && response.status !== 401) {
+    const body = await response.json().catch(() => null) as any;
+    throw Object.assign(new Error(body?.error?.message ?? "Çıkış tamamlanamadı"), { status: response.status });
+  }
 }
 
 export async function getPanelCustomerContext(config: AppConfig, token: string, panelCustomerId: string | null, query: {email?: string; phone?: string}) {
@@ -32,7 +46,7 @@ export async function getPanelCustomerContext(config: AppConfig, token: string, 
   if (panelCustomerId) params.set("customer_id", panelCustomerId);
   if (query.email) params.set("email", query.email);
   if (query.phone) params.set("phone", query.phone);
-  const response = await panelFetch(config, `/api/customer-hub/context?${params}`, { headers: { authorization: `Bearer ${token}` } });
+  const response = await panelFetch(config, `/api/customer-hub/context?${params}`, { headers: serviceHeaders(config, token) });
   if (response.status === 404) return { status: "not_linked" as const };
   if (!response.ok) throw new PanelUnavailableError(`Panel context ${response.status}`);
   return { status: "ok" as const, data: await response.json() };

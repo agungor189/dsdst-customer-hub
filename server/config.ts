@@ -12,11 +12,14 @@ export function loadConfig() {
   const production = process.env.NODE_ENV === "production";
   const key = process.env.CUSTOMER_HUB_ENCRYPTION_KEY ?? (production ? "" : "0".repeat(64));
   if (!/^[0-9a-fA-F]{64}$/.test(key)) throw new Error("CUSTOMER_HUB_ENCRYPTION_KEY 32-byte hex anahtar olmalı");
+  const panelServiceApiKey = process.env.PANEL_API_KEY ?? (production ? "" : "customer-hub-development-service-key");
+  if (!panelServiceApiKey) throw new Error("PANEL_API_KEY scoped Customer Hub service key is required");
   return {
     production,
     port: int("PORT", 3100),
     appOrigin: process.env.APP_ORIGIN ?? "http://localhost:3100",
     panelBaseUrl: (process.env.PANEL_BASE_URL ?? "http://localhost:3000").replace(/\/$/, ""),
+    panelServiceApiKey,
     databasePath: path.resolve(process.env.DATABASE_PATH ?? "./data/customer-hub.db"),
     attachmentsDir: path.resolve(process.env.ATTACHMENTS_DIR ?? "./data/attachments"),
     encryptionKey: Buffer.from(key, "hex"),

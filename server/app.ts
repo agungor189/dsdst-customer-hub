@@ -8,7 +8,7 @@ import type Database from "better-sqlite3";
 import type { AppConfig } from "./config.js";
 import type { PanelUser } from "../shared/contracts/domain.js";
 import { loginSchema, inboundSchema } from "../shared/schemas/api.js";
-import { panelLogin, panelMe } from "./panel/client.js";
+import { panelLogin, panelLogout, panelMe } from "./panel/client.js";
 import { createAuthMiddleware, csrfOrigin, requirePermission } from "./auth/middleware.js";
 import { createConversationRouter } from "./conversations/router.js";
 import { createContactRouter } from "./contacts/router.js";
@@ -26,7 +26,8 @@ import { writeAudit } from "./audit/index.js";
 
 type Verify = (config:AppConfig,token:string)=>Promise<PanelUser>;
 type Login = typeof panelLogin;
-export function createApp(input:{db:Database.Database;config:AppConfig;registry:AdapterRegistry;worker:OutboxWorker;verify?:Verify;login?:Login}){
+type Logout = typeof panelLogout;
+export function createApp(input:{db:Database.Database;config:AppConfig;registry:AdapterRegistry;worker:OutboxWorker;verify?:Verify;login?:Login;logout?:Logout}){
   const {db,config,registry,worker}=input;const app=express();app.disable("x-powered-by");app.set("trust proxy",1);
   app.use(helmet({contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],imgSrc:["'self'","data:","https:"],connectSrc:["'self'"],objectSrc:["'none'"],frameAncestors:["'none'"]}},crossOriginEmbedderPolicy:false}));
   app.use(express.json({limit:"1mb",verify:(req,_res,buf)=>{(req as any).rawBody=Buffer.from(buf);}}));app.use(cookieParser());app.use(csrfOrigin(config));
@@ -34,7 +35,7 @@ export function createApp(input:{db:Database.Database;config:AppConfig;registry:
   app.use("/api/webhooks/meta",createMetaWebhookRouter(db,config));
   const loginLimiter=rateLimit({windowMs:15*60_000,limit:10,skipSuccessfulRequests:true,standardHeaders:true,legacyHeaders:false});
   app.post("/api/auth/login",loginLimiter,async(req,res)=>{const parsed=loginSchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR"}});try{const result=await (input.login??panelLogin)(config,parsed.data.username,parsed.data.password);res.cookie(config.sessionCookieName,result.token,{httpOnly:true,secure:config.sessionSecure,sameSite:"strict",maxAge:12*60*60*1000,path:"/"});writeAudit(db,{actorUserId:result.user.id,action:"LOGIN_SUCCESS",entityType:"session",entityId:result.user.id,ip:req.ip});res.json({user:result.user});}catch(error:any){res.status(error.status??502).json({error:{code:error.status===401?"AUTH_FAILED":"PANEL_UNAVAILABLE",message:error.message}});}});
-  app.post("/api/auth/logout",(req,res)=>{res.clearCookie(config.sessionCookieName,{httpOnly:true,secure:config.sessionSecure,sameSite:"strict",path:"/"});res.status(204).end();});
+  app.post("/api/auth/logout",async(req,res)=>{const token=req.cookies?.[config.sessionCookieName];if(token){try{await(input.logout??panelLogout)(config,token);}catch(error:any){if(error?.status!==401)return res.status(error?.status??502).json({error:{code:"PANEL_UNAVAILABLE",message:error.message}});}}res.clearCookie(config.sessionCookieName,{httpOnly:true,secure:config.sessionSecure,sameSite:"strict",path:"/"});res.status(204).end();});
   const auth=createAuthMiddleware(config,input.verify??panelMe);app.use("/api",auth);
   app.get("/api/auth/me",(req,res)=>res.json({user:req.panelUser}));
   app.use("/api/conversations",createConversationRouter(db,config));app.use("/api/contacts",createContactRouter(db));app.use("/api/tags",createTagRouter(db));app.use("/api/channels",createChannelRouter(db,config,registry));app.use("/api/canned-responses",createCannedResponsesRouter(db));app.use("/api/attachments",createAttachmentRouter(db,config));app.use("/api/backups",createBackupRouter(db,config));
