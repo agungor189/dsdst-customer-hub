@@ -8,6 +8,7 @@ export const conversationQuerySchema = z.object({
   status: z.enum(conversationStatuses).optional(),
   priority: z.enum(priorities).optional(),
   assigned: z.string().max(100).optional(),
+  tag: z.string().uuid().optional(),
   unread: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -29,6 +30,7 @@ export const whatsappTemplateListQuerySchema = z.object({
 });
 export const noteSchema = z.object({ text: z.string().trim().min(1).max(10_000) });
 export const assignmentSchema = z.object({ assigned_user_id: z.string().min(1).max(100).nullable() });
+export const readStateSchema = z.object({ unread: z.boolean() });
 export const statusSchema = z.object({ status: z.enum(conversationStatuses) });
 export const tagSchema = z.object({ name: z.string().trim().min(1).max(60), color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#64748b") });
 export const inboundSchema = z.object({

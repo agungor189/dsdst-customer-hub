@@ -39,6 +39,8 @@ test("email ownership migration backfills only one unambiguous CHANNEL_CREATED a
   });
   assert.equal((migrated.prepare("SELECT count(*) count FROM audit_logs").get() as {count:number}).count,5);
   assert.equal((migrated.prepare("SELECT count(*) count FROM schema_migrations WHERE version=3").get() as {count:number}).count,1);
+  assert.equal((migrated.prepare("SELECT count(*) count FROM schema_migrations WHERE version=4").get() as {count:number}).count,1);
+  assert.ok(migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='customer_notes'").get());
   migrated.close();
   fs.rmSync(root,{recursive:true,force:true});
 });

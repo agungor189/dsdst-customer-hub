@@ -152,4 +152,21 @@ export const migrations: Migration[] = [{
 
     UPDATE channel_accounts SET owner_user_id = NULL WHERE channel_type <> 'EMAIL';
   `,
+}, {
+  version: 4,
+  name: "customer_profile_notes",
+  sql: `
+    CREATE TABLE customer_notes (
+      id TEXT PRIMARY KEY,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      username TEXT NOT NULL,
+      text TEXT NOT NULL,
+      visibility TEXT NOT NULL CHECK (visibility IN ('SHARED','PERSONAL')),
+      owner_user_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK ((visibility = 'SHARED' AND owner_user_id IS NULL) OR (visibility = 'PERSONAL' AND owner_user_id IS NOT NULL))
+    );
+    CREATE INDEX customer_notes_contact_idx ON customer_notes(contact_id, created_at);
+  `,
 }];

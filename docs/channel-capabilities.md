@@ -10,10 +10,10 @@
 | Email | ✓ | ✓ | ✓ | — | ✓ | Gerçek IMAP UID polling + SMTP HTML/text reply; RFC header threading, güvenli inbound/outbound ekler ve hesap bazlı imza |
 | Website | ✓ | ✓ | ✓ | ✓ | — | First-party public chat API + local delivery queue; dış provider/send endpoint yok |
 | Trendyol | ✓ | ✓ | — | — | ✓ | `PRODUCT_QUESTION`, klasik DM değil |
-| n11 | ✓ | ✓ | — | — | ✓ | `PRODUCT_QUESTION`, klasik DM değil |
+| n11 | — | — | — | — | — | Kanal tipi korunur; gerçek provider adapter'ı henüz yok, bağlantı ve sahte gönderim sunulmaz |
 | Manual | ✓ | — | — | — | — | Dış URL + dahili not/geçmiş; reply UI gizli |
 
-Ek capability'ler: Facebook Messenger ve WhatsApp `MARK_READ`; Instagram, Facebook, WhatsApp ve Email `CUSTOMER_PROFILE`; Trendyol/n11 `PRODUCT_QUESTIONS`. Instagram kesin bir resmi mark-read sözleşmesi kullanılmadığı için `MARK_READ` ilan etmez. Meta adapter'larında `CUSTOMER_PROFILE`, webhook sender identity'sinin contact/identity modeline alınması ve fallback display name anlamındadır; bu sürüm ayrı profile API fetch'i yapmaz. Provider dokümantasyonu doğrulanmadan capability eklenmez.
+Ek capability'ler: Facebook Messenger ve WhatsApp `MARK_READ`; Instagram, Facebook, WhatsApp ve Email `CUSTOMER_PROFILE`; Trendyol `PRODUCT_QUESTIONS`. Instagram kesin bir resmi mark-read sözleşmesi kullanılmadığı için `MARK_READ` ilan etmez. n11 kanal tipi veri modelinde ayrı kalır ancak gerçek adapter uygulanana kadar capability veya bağlantı başarısı ilan etmez. Meta adapter'larında `CUSTOMER_PROFILE`, webhook sender identity'sinin contact/identity modeline alınması ve fallback display name anlamındadır; bu sürüm ayrı profile API fetch'i yapmaz. Provider dokümantasyonu doğrulanmadan capability eklenmez.
 
 Instagram ve Facebook tek `/api/webhooks/meta` callback'ini WhatsApp ile paylaşır; GET verify token ve POST `X-Hub-Signature-256` doğrulaması ortaktır. Echo/self event'leri müşteri inbound mesajı oluşturmaz. Remote media binary indirilmez; attachment placeholder ve güvenli provider metadata alt kümesi saklanır. Facebook provider message ID içeren delivery event'leri generic status mekanizmasına gider; watermark-only read event'i message ID taşımadığı için sahte `READ` oluşturulmaz. Instagram için provider status desteği varsayılmaz.
 

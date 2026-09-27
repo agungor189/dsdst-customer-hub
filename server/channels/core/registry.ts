@@ -19,7 +19,7 @@ export function createAdapterRegistry(config: AppConfig) {
     new EmailAdapter({ timeoutMs: config.outboundTimeoutMs, attachmentsDir: config.attachmentsDir }),
     new WebsiteAdapter(),
     new TrendyolAdapter({ timeoutMs: config.outboundTimeoutMs }),
-    new FoundationAdapter("N11", caps("READ_MESSAGES","SEND_MESSAGES","POLLING","PRODUCT_QUESTIONS"), ["api_key","api_secret"]),
+    new FoundationAdapter("N11", caps(), [], false),
     new FoundationAdapter("MANUAL_EXTERNAL", caps("READ_MESSAGES","CUSTOMER_PROFILE")),
   ];
   const byType = new Map(adapters.map(adapter => [adapter.channelType, adapter]));

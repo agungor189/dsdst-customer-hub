@@ -122,6 +122,8 @@ test("In-Reply-To then reverse References thread replies; unrelated mail starts 
   ]);const h=harness(messages);const adapter=new EmailAdapter({timeoutMs:100,attachmentsDir:config.attachmentsDir,factory:h.factory});await adapter.syncMessages(context);
   const threaded=db.prepare("SELECT count(DISTINCT conversation_id) count FROM messages WHERE external_message_id IN ('<root@example.test>','<reply@example.test>','<reference@example.test>')").get() as any;assert.equal(threaded.count,1);
   assert.equal((db.prepare("SELECT count(DISTINCT conversation_id) count FROM messages WHERE external_message_id IN ('<root@example.test>','<other@example.test>')").get() as any).count,2);
+  assert.equal((db.prepare("SELECT unread_count FROM conversations WHERE id=(SELECT conversation_id FROM messages WHERE external_message_id='<root@example.test>')").get() as any).unread_count,3);
+  assert.equal((db.prepare("SELECT unread_count FROM conversations WHERE id=(SELECT conversation_id FROM messages WHERE external_message_id='<other@example.test>')").get() as any).unread_count,1);
   const metadata=JSON.parse((db.prepare("SELECT metadata_json FROM conversations WHERE id=(SELECT conversation_id FROM messages WHERE external_message_id='<reply@example.test>')").get() as any).metadata_json);assert.equal(metadata.latest_message_id,"<reference@example.test>");assert.equal(metadata.root_message_id,"<root@example.test>");db.close();
 });
 

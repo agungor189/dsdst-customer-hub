@@ -3,8 +3,9 @@ import type { ChannelAccountContext, ChannelAdapter, OutboundEnvelope, SendResul
 import { ProviderError } from "./types.js";
 
 export class FoundationAdapter implements ChannelAdapter {
-  constructor(public readonly channelType: ChannelType, public readonly capabilities: ReadonlySet<Capability>, private readonly required: string[] = []) {}
+  constructor(public readonly channelType: ChannelType, public readonly capabilities: ReadonlySet<Capability>, private readonly required: string[] = [], private readonly implemented = true) {}
   validateConfiguration(credentials: Record<string,string> | null) {
+    if (!this.implemented) return { valid: false, errors: [`${this.channelType} provider integration is not implemented`] };
     const errors = this.required.filter(key => !credentials?.[key]).map(key => `${key} is required`);
     return { valid: errors.length === 0, errors };
   }

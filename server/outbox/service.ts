@@ -20,6 +20,7 @@ function queueOutbound(db: Database.Database, registry: AdapterRegistry, convers
     if (!conversation) throw Object.assign(new Error("Conversation not found"), {status:404});
     if (options.requiredChannel && conversation.channel_type !== options.requiredChannel) throw Object.assign(new Error("Conversation channel does not support this message type"), {status:400,code:"CHANNEL_NOT_SUPPORTED"});
     const adapter = registry.get(conversation.channel_type as ChannelType);
+    if (!adapter.capabilities.has("SEND_MESSAGES")) throw Object.assign(new Error(`${conversation.channel_type} doğrudan yanıtı desteklemiyor`), {status:400,code:"CAPABILITY_UNSUPPORTED"});
     if (adapter.validateReply) {
       try {
         adapter.validateReply(

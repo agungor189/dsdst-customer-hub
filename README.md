@@ -46,6 +46,14 @@ Geliştirme seed'i, gerçek provider hesabı gibi davranmayan örnek konuşmalar
 
 İzinler: `customer_hub:view`, `reply`, `assign`, `manage_channels`, `manage_tags`, `view_customer_context`. `admin` tümüne sahiptir; `readonly`, JSON kaydında yanlışlıkla reply verilse bile yazamaz.
 
+## Inbox state ve müşteri bağlamı
+
+- Sidebar sayaçları `GET /api/conversations/counts` üzerinden, aktif liste filtresinden bağımsız ve kullanıcının shared/personal channel erişim kapsamı içinde hesaplanır.
+- Conversation detayı salt-okunurdur. Yalnız kullanıcının konuşmayı açma eylemi `PUT /api/conversations/:id/read-state` ile Hub'daki global conversation unread state'ini değiştirir; liste yenileme veya polling bunu değiştirmez.
+- Assignment endpoint'i yalnız self-assign ve kullanıcının kendi assignment'ını bırakmasına izin verir. Tag ilişkileri `conversation_tags`, dahili notlar `internal_notes` içinde kalıcıdır.
+- Müşteri notları canonical `contact_id` üzerinde `customer_notes` tablosunda saklanır. Shared channel notları ortak; kişisel e-posta üzerinden girilen notlar yalnız mailbox sahibi kullanıcı kapsamındadır.
+- Müşteri/sipariş verisinin sahibi Panel'dir. Hub `/api/customer-hub/context` sonucunu gösterir, siparişin ikinci bir kopyasını oluşturmaz ve eksik alanlar için placeholder veri üretmez.
+
 ## Ortam değişkenleri
 
 | Değişken | Açıklama |

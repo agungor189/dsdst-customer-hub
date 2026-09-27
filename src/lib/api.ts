@@ -22,5 +22,8 @@ export const domainErrorMessage:Record<string,string>={
   VALIDATION_ERROR:"Lütfen işaretli alanları kontrol edin.",
   CHANNEL_ACCOUNT_MISMATCH:"Kanal hesabı ile gönderilen ayarlar eşleşmiyor.",
   FORBIDDEN:"Bu işlem için yetkiniz yok.",
+  ASSIGNMENT_SELF_ONLY:"Konuşmaları yalnızca kendinize atayabilirsiniz.",
+  ASSIGNED_TO_ANOTHER_USER:"Bu konuşma başka bir kullanıcıya atanmış.",
+  CAPABILITY_UNSUPPORTED:"Bu kanal doğrudan yanıtı desteklemiyor.",
 };
 export async function api<T>(path:string,init:RequestInit={}):Promise<T>{const response=await fetch(`/api${path}`,{...init,credentials:"same-origin",headers:{...(init.body instanceof FormData?{}:{"content-type":"application/json"}),...init.headers}});if(response.status===204)return undefined as T;const body=await response.json().catch(()=>({}));if(!response.ok){const code=body?.error?.code;throw new ApiError(domainErrorMessage[code]??body?.error?.message??"İşlem tamamlanamadı",response.status,code);}return body as T;}
