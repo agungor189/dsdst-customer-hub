@@ -34,11 +34,15 @@ export function createConversationRouter(db: Database.Database, config: AppConfi
     const conversation=db.prepare(`SELECT c.*,a.channel_type,a.name channel_name,a.status channel_status,ct.display_name,ct.email,ct.phone,ct.panel_customer_id
       FROM conversations c JOIN channel_accounts a ON a.id=c.channel_account_id JOIN contacts ct ON ct.id=c.contact_id WHERE c.id=?`).get(req.params.id) as any;
     if(!conversation)return res.status(404).json({error:{code:"NOT_FOUND"}});
-    const messages=db.prepare("SELECT id,direction,sender_type,sender_external_id,body_text,body_html,message_type,status,external_created_at,received_at,sent_at,created_at FROM messages WHERE conversation_id=? ORDER BY datetime(created_at),rowid").all(req.params.id);
+    const messages=db.prepare("SELECT id,direction,sender_type,sender_external_id,body_text,body_html,message_type,status,external_created_at,received_at,sent_at,created_at,metadata_json FROM messages WHERE conversation_id=? ORDER BY datetime(created_at),rowid").all(req.params.id) as any[];
+    const attachmentRows=db.prepare(`SELECT a.id,a.message_id,a.type,a.filename,a.mime_type,a.size_bytes,a.storage_path IS NOT NULL downloadable
+      FROM attachments a JOIN messages m ON m.id=a.message_id WHERE m.conversation_id=? ORDER BY a.created_at,a.id`).all(req.params.id) as any[];
+    const attachmentsByMessage=new Map<string,any[]>();
+    for(const attachment of attachmentRows){const items=attachmentsByMessage.get(attachment.message_id)??[];items.push({...attachment,download_url:attachment.downloadable?`/api/attachments/${attachment.id}/download`:null});attachmentsByMessage.set(attachment.message_id,items);}
     const notes=db.prepare("SELECT * FROM internal_notes WHERE conversation_id=? ORDER BY datetime(created_at)").all(req.params.id);
     const tags=db.prepare("SELECT t.* FROM tags t JOIN conversation_tags ct ON ct.tag_id=t.id WHERE ct.conversation_id=?").all(req.params.id);
     db.prepare("UPDATE conversations SET unread_count=0 WHERE id=?").run(req.params.id);
-    res.json({...conversation,metadata:json(conversation.metadata_json,{}),messages,notes,tags});
+    res.json({...conversation,metadata:json(conversation.metadata_json,{}),messages:messages.map(message=>({...message,metadata:json(message.metadata_json,{}),attachments:attachmentsByMessage.get(message.id)??[]})),notes,tags});
   });
   router.post("/:id/replies",requirePermission("customer_hub:reply"),(req,res)=>{
     const parsed=replySchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
