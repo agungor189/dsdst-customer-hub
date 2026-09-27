@@ -4,7 +4,7 @@ import type Database from "better-sqlite3";
 export type NormalizedInboundMessage = {
   eventId: string; externalAccountId: string; externalConversationId: string; externalMessageId: string;
   externalUserId: string; displayName: string; username?: string; body: string; subject?: string;
-  messageType: string; externalCreatedAt: string; metadata: Record<string, unknown>;
+  email?: string; phone?: string; messageType: string; externalCreatedAt: string; metadata: Record<string, unknown>;
 };
 export type OutboundEnvelope = { messageId: string; externalConversationId: string; body: string; metadata: Record<string, unknown> };
 export type SendResult = { externalMessageId: string; status: "SENT" | "DELIVERED" };

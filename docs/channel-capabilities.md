@@ -8,7 +8,7 @@
 | Facebook Messenger | ✓ | ✓ | ✓ | ✓ | — | Page Messaging API; 24 saatlik standart reply penceresi queue ve send aşamasında |
 | WhatsApp Business | ✓ | ✓ | ✓ | ✓ | — | Cloud API; 24 saatlik serbest yanıt penceresi queue ve send aşamasında uygulanır |
 | Email | ✓ | ✓ | ✓ | — | ✓ | Gerçek IMAP UID polling + SMTP text reply; RFC header threading, 10 MB güvenli inbound ek limiti |
-| Website | ✓ | ✓ | ✓ | ✓ | — | İmzalı webhook ve yapılandırılmış send endpoint |
+| Website | ✓ | ✓ | ✓ | ✓ | — | First-party public chat API + local delivery queue; dış provider/send endpoint yok |
 | Trendyol | ✓ | ✓ | — | — | ✓ | `PRODUCT_QUESTION`, klasik DM değil |
 | n11 | ✓ | ✓ | — | — | ✓ | `PRODUCT_QUESTION`, klasik DM değil |
 | Manual | ✓ | — | — | — | — | Dış URL + dahili not/geçmiş; reply UI gizli |
@@ -18,3 +18,5 @@ Ek capability'ler: Facebook Messenger ve WhatsApp `MARK_READ`; Instagram, Facebo
 Instagram ve Facebook tek `/api/webhooks/meta` callback'ini WhatsApp ile paylaşır; GET verify token ve POST `X-Hub-Signature-256` doğrulaması ortaktır. Echo/self event'leri müşteri inbound mesajı oluşturmaz. Remote media binary indirilmez; attachment placeholder ve güvenli provider metadata alt kümesi saklanır. Facebook provider message ID içeren delivery event'leri generic status mekanizmasına gider; watermark-only read event'i message ID taşımadığı için sahte `READ` oluşturulmaz. Instagram için provider status desteği varsayılmaz.
 
 Email WEBHOOK capability'si sunmaz. Her hesap ayrı credential ve `sync_cursors` kapsamıyla poll edilir; singleton adapter hesap state'i taşımaz. SMTP kabulü `SENT` olarak kaydedilir, teslim/okunma durumu varsayılmaz. Outbound attachment ayrı bir feature'dır.
+
+Website, DSDST'nin kendi first-party kanalıdır. `site_id` ile eşleşen `external_account_id`, `site_name` ve wildcard içermeyen exact `allowed_origins` listesi zorunludur. Public session tokenı yalnız hash olarak saklanır, 30 günde sona erer ve hesap + origin kapsamlıdır. Public endpoint'lerde IP/session rate limitleri, Zod sınırları, idempotency ve hızlı aynı mesaj tekrarı koruması bulunur. Agent reply generic outbox'tan geçip `SENT` olur; widget fetch'i `DELIVERED`, visible read ACK'i `READ` yapar ve generic statü sıralaması downgrade'i engeller. Widget şu an kısa polling kullanır. Capability matrisi gelecekteki attachment akışına izin verse de bu sürüm public upload veya attachment UI sunmaz.

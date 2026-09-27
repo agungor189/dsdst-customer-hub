@@ -4,6 +4,11 @@ import type { ChannelType } from "../../shared/contracts/domain.js";
 import type { NormalizedInboundMessage } from "../channels/core/types.js";
 
 const normalizeEmail = (value?: string) => value?.trim().toLowerCase() || null;
+const normalizePhone = (value?: string) => {
+  if (!value?.trim()) return null;
+  const trimmed=value.trim(); const digits=trimmed.replace(/\D/g,"");
+  return digits ? `${trimmed.startsWith("+")?"+":""}${digits}` : null;
+};
 
 export function ingestInbound(db: Database.Database, channelType: ChannelType, input: NormalizedInboundMessage) {
   return db.transaction(() => {
@@ -24,11 +29,19 @@ export function ingestInbound(db: Database.Database, channelType: ChannelType, i
     let identity = db.prepare("SELECT contact_id FROM contact_identities WHERE channel_account_id=? AND external_user_id=?").get(account.id,input.externalUserId) as {contact_id:string}|undefined;
     if (!identity) {
       const contactId = randomUUID();
-      const email = channelType === "EMAIL" ? normalizeEmail(input.externalUserId) : null;
-      db.prepare("INSERT INTO contacts(id,display_name,email,normalized_email) VALUES(?,?,?,?)").run(contactId,input.displayName,email,email);
+      const email = input.email?.trim() || (channelType === "EMAIL" ? input.externalUserId : null);
+      const normalizedEmail = normalizeEmail(email ?? undefined);
+      const phone = input.phone?.trim() || null;
+      db.prepare("INSERT INTO contacts(id,display_name,email,normalized_email,phone,normalized_phone) VALUES(?,?,?,?,?,?)").run(contactId,input.displayName,email,normalizedEmail,phone,normalizePhone(phone ?? undefined));
       db.prepare("INSERT INTO contact_identities(id,contact_id,channel_type,channel_account_id,external_user_id,username,raw_metadata_json) VALUES(?,?,?,?,?,?,?)")
         .run(randomUUID(),contactId,channelType,account.id,input.externalUserId,input.username??null,JSON.stringify(input.metadata));
       identity = {contact_id:contactId};
+    } else if (input.email || input.phone || input.displayName !== "Website Ziyaretçisi") {
+      db.prepare(`UPDATE contacts SET
+        display_name=CASE WHEN ?<>'Website Ziyaretçisi' THEN ? ELSE display_name END,
+        email=COALESCE(?,email),normalized_email=COALESCE(?,normalized_email),
+        phone=COALESCE(?,phone),normalized_phone=COALESCE(?,normalized_phone),updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .run(input.displayName,input.displayName,input.email?.trim()||null,normalizeEmail(input.email),input.phone?.trim()||null,normalizePhone(input.phone),identity.contact_id);
     }
     let conversation = db.prepare("SELECT id FROM conversations WHERE channel_account_id=? AND external_conversation_id=?").get(account.id,input.externalConversationId) as {id:string}|undefined;
     if (!conversation) {

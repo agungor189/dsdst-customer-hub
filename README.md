@@ -10,6 +10,7 @@ Browser ── same-origin cookie ──> Customer Hub (Express + React)
                        /api/auth/* ────┼──> Panel HTTP API
                                       │
              webhooks / polling ──> adapters ──> channel providers
+      website widget / public API ──> first-party Website adapter
                                       │
                               SQLite WAL + /data/attachments
                                       │
@@ -17,14 +18,14 @@ Browser ── same-origin cookie ──> Customer Hub (Express + React)
 ```
 
 - `server/auth`: Panel login proxy, her istekte `/api/auth/me`, server-side izin kontrolü.
-- `server/channels`: capability tabanlı adapter registry; gerçek Instagram Messaging, Facebook Messenger, WhatsApp Cloud, Email IMAP/SMTP ve Trendyol adapter'ları ile diğer kanal temelleri.
+- `server/channels`: capability tabanlı adapter registry; gerçek Instagram Messaging, Facebook Messenger, WhatsApp Cloud, Email IMAP/SMTP, Website ve Trendyol adapter'ları ile diğer kanal temelleri.
 - `server/messages`: inbound normalizasyonu ve webhook/external message idempotency.
 - `server/outbox`: atomik kuyruğa alma, local claim kilidi ve retry/backoff. SMTP protokolü gerçek exactly-once garantisi vermez; retry aynı deterministik Message-ID'yi kullanır.
 - `server/db`: sıralı migrations; WAL, foreign keys ve busy timeout.
 - `src/features`: inbox, conversations, contacts ve auth arayüzleri.
 - `shared`: istemci/sunucu ortak domain tipleri ve Zod şemaları.
 
-Provider foundation adapter'ları gerçek credential olmadan `NOT_CONFIGURED` kalır; sahte başarı dönmez. Instagram Messaging, Facebook Messenger, WhatsApp Cloud API ve Email gerçek adapter kullanır. Mock adapter yalnız `NODE_ENV!=production` ve `MOCK_ADAPTERS_ENABLED=true` olduğunda açılır.
+Provider foundation adapter'ları gerçek credential olmadan `NOT_CONFIGURED` kalır; sahte başarı dönmez. Instagram Messaging, Facebook Messenger, WhatsApp Cloud API, Email ve first-party Website chat gerçek adapter kullanır.
 
 ## Lokal geliştirme
 
@@ -139,6 +140,54 @@ Thread çözümü sırasıyla `In-Reply-To`, sonra `References` zincirini sondan
 Inbound HTML allowlist ile sanitize edilmeden saklanmaz; UI metin gövdesini kullanmaya devam eder. JPEG, PNG, WebP ve PDF ekleri attachment başına en fazla 10 MB olacak şekilde rastgele disk adı, normalize filename ve SHA-256 ile `ATTACHMENTS_DIR` altında saklanır. Desteklenmeyen/büyük ek atlanır, email korunur ve güvenli skip metadata'sı yazılır. Hub'dan outbound attachment gönderimi bu sürümün kapsamında değildir.
 
 Development mock inbound, yalnız mock modu açıkken ve `manage_channels` izniyle `POST /api/dev/mock/inbound` üzerinden gönderilebilir. Bu endpoint production'da 404'tür.
+
+## Website Live Chat
+
+Website kanalı Shopify Inbox veya dış bir mesaj sağlayıcısı kullanmaz. Widget mesajları Hub'ın public API'sine gelir; agent yanıtı mevcut `queueReply → outbox → WebsiteAdapter` hattından geçer ve Hub veritabanında widget teslimatına hazır olur. Widget fetch'i `DELIVERED`, görünür thread'in read ACK'i `READ` statüsü üretir. Adapter hiçbir external send endpoint'ine HTTP çağrısı yapmaz.
+
+Website kanal hesabı `external_account_id = site_id` olacak şekilde oluşturulur. `allowed_origins`, wildcard içermeyen exact HTTPS origin'lerinden oluşan JSON array string'idir; yalnız lokal geliştirmede localhost HTTP kabul edilir. `widget_secret` opsiyoneldir ve verildiğinde en az 16 karakter olmalıdır.
+
+```json
+{
+  "channel_type": "WEBSITE",
+  "name": "DSDST Shopify TR",
+  "external_account_id": "dsdst-shopify-tr",
+  "credentials": {
+    "site_id": "dsdst-shopify-tr",
+    "site_name": "DSDST",
+    "allowed_origins": "[\"https://dsdst.com\",\"https://dsdst.myshopify.com\"]"
+  }
+}
+```
+
+Public API panel cookie/login istemez; bunun yerine exact origin, `X-DSDST-Site-ID`, opaque Bearer session token, IP/session rate limitleri, Zod payload sınırları ve repeated-message koruması uygular:
+
+- `POST /api/public/chat/session`
+- `POST /api/public/chat/messages`
+- `GET /api/public/chat/messages`
+- `POST /api/public/chat/read`
+
+Session token 256-bit kriptografik rastgele üretilir; veritabanında yalnız SHA-256 hash'i ve 30 günlük expiry tutulur. Token URL'ye yazılmaz ve account + oluşturulduğu exact origin kapsamından çıkarılamaz. Widget cookie, Shopify customer tokenı, Panel anahtarı, Hub encryption key'i veya Shopify Admin tokenı almaz. Mesaj gövdesi plain text saklanır ve widget tarafından yalnız `textContent` ile render edilir. İsim/e-posta/telefon opsiyoneldir; email lowercase, telefon güvenli karşılaştırma biçimine normalize edilir. Ürün sayfası context'i yalnız açıkça izin verilen product/page alanlarıyla conversation metadata'sına eklenir.
+
+### Shopify kurulumu
+
+Önce `npm run build` ile `dist/widget/dsdst-chat.js` üretin ve Hub'ı örneğin `https://hub.dsdst.com` altında yayınlayın. Shopify theme Custom Liquid alanına veya kapanış `</body>` öncesine şunu ekleyin:
+
+```liquid
+<script
+  src="https://hub.dsdst.com/widget/dsdst-chat.js"
+  data-site-id="dsdst-shopify-tr"
+  data-product-id="{{ product.id }}"
+  data-product-handle="{{ product.handle | escape }}"
+  data-product-title="{{ product.title | escape }}"
+  data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+  defer>
+</script>
+```
+
+Hub URL'si widget bundle'ında hardcode değildir; API origin'i varsayılan olarak script `src` origin'inden türetilir. Ayrı API hostu gerekiyorsa `data-api-base="https://hub.dsdst.com"` kullanılabilir. Sıkı CSP kullanan mağazalar Hub origin'ini `script-src` ve `connect-src` allowlist'lerine eklemelidir; nonce tabanlı CSP'de script'e verilen nonce widget style elementi tarafından da devralınır. Hub widget dosyasını `Cross-Origin-Resource-Policy: cross-origin` ile sunar. Bu repository değişikliği Shopify temasına veya production domain'e otomatik deploy yapmaz.
+
+İlk sürüm 2,5 saniyelik kısa polling kullanır. Attachment capability kanal mimarisinde korunur ancak public upload endpoint'i ve widget attachment butonu bu sürümde yoktur. Agent online/offline presence ve CAPTCHA da henüz uygulanmaz.
 
 ## Yeni adapter geliştirme
 
