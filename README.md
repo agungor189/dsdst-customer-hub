@@ -17,14 +17,14 @@ Browser ── same-origin cookie ──> Customer Hub (Express + React)
 ```
 
 - `server/auth`: Panel login proxy, her istekte `/api/auth/me`, server-side izin kontrolü.
-- `server/channels`: capability tabanlı adapter registry; Meta, Email, Trendyol, n11, Website ve Manual temelleri.
+- `server/channels`: capability tabanlı adapter registry; gerçek WhatsApp Cloud, Email IMAP/SMTP ve Trendyol adapter'ları ile diğer kanal temelleri.
 - `server/messages`: inbound normalizasyonu ve webhook/external message idempotency.
-- `server/outbox`: atomik kuyruğa alma, claim kilidi, retry/backoff ve tek-gönderim garantisi.
+- `server/outbox`: atomik kuyruğa alma, local claim kilidi ve retry/backoff. SMTP protokolü gerçek exactly-once garantisi vermez; retry aynı deterministik Message-ID'yi kullanır.
 - `server/db`: sıralı migrations; WAL, foreign keys ve busy timeout.
 - `src/features`: inbox, conversations, contacts ve auth arayüzleri.
 - `shared`: istemci/sunucu ortak domain tipleri ve Zod şemaları.
 
-Provider foundation adapter'ları gerçek credential olmadan `NOT_CONFIGURED` kalır; sahte başarı dönmez. WhatsApp Cloud API gerçek bir webhook/outbound adapter kullanır. Mock adapter yalnız `NODE_ENV!=production` ve `MOCK_ADAPTERS_ENABLED=true` olduğunda açılır.
+Provider foundation adapter'ları gerçek credential olmadan `NOT_CONFIGURED` kalır; sahte başarı dönmez. WhatsApp Cloud API ve Email gerçek adapter kullanır. Mock adapter yalnız `NODE_ENV!=production` ve `MOCK_ADAPTERS_ENABLED=true` olduğunda açılır.
 
 ## Lokal geliştirme
 
@@ -79,6 +79,35 @@ Meta callback: `https://<hub-host>/api/webhooks/meta`. GET challenge `META_WEBHO
 
 WhatsApp kanal hesabı credential şeması `access_token`, `phone_number_id`, opsiyonel `business_account_id` ve `vXX.X` biçiminde `graph_api_version` alanlarından oluşur. `channel_accounts.external_account_id`, aynı `phone_number_id` değerini taşımalıdır. Serbest metin yanıtı yalnız son inbound WhatsApp mesajından sonraki 24 saat içinde kuyruğa alınır; worker göndermeden hemen önce pencereyi yeniden kontrol eder. Template gönderimi ve inbound medya binary indirme bu sürümün kapsamında değildir.
 
+## Email IMAP/SMTP adapter
+
+Email hesabının `external_account_id` alanı mailbox adresidir. Credential'lar aşağıdaki şemayla kanal oluşturma API'sine verilir; değerler AES-256-GCM ile `encrypted_credentials` içinde saklanır ve API yanıtlarına/audit kayıtlarına dönmez.
+
+```json
+{
+  "imap_host": "imap.example.com",
+  "imap_port": "993",
+  "imap_secure": "true",
+  "smtp_host": "smtp.example.com",
+  "smtp_port": "465",
+  "smtp_secure": "true",
+  "username": "support@example.com",
+  "password": "<secret>",
+  "from_address": "support@example.com",
+  "from_name": "DSDST Destek",
+  "reply_to": "support@example.com",
+  "imap_mailbox": "INBOX"
+}
+```
+
+Zorunlu alanlar: `imap_host`, `imap_port`, `imap_secure`, `smtp_host`, `smtp_port`, `smtp_secure`, `username`, `password`. Port aralığı 1–65535'tir; secure alanları `true`/`false` veya `1`/`0` kabul eder. `imap_mailbox` varsayılanı `INBOX`; `from_address` yoksa email biçimindeki `username` kullanılır.
+
+Polling UNSEEN flag'ine bağlı değildir. Her hesap için `UIDVALIDITY` ve son başarıyla işlenen UID, `sync_cursors` içinde ayrı tutulur. İlk sync son 7 günle ve en yeni 500 mesajla sınırlıdır; sonraki sync cursor sonrasını alır. `UIDVALIDITY` değişince aynı sınırlı pencere yeniden taranır ve RFC `Message-ID` idempotency'si tekrarları engeller. `Message-ID` yoksa hesap + UIDVALIDITY + UID üzerinden deterministik ID üretilir.
+
+Thread çözümü sırasıyla `In-Reply-To`, sonra `References` zincirini sondan başa kullanır; subject benzerliği thread birleştirmez. SMTP yanıtı conversation `reply_to` adresine (yoksa müşteri adresine) gider, tek bir `Re:` kullanır ve `In-Reply-To`/`References` başlıklarını korur. Her Hub mesajı için deterministik RFC Message-ID retry boyunca aynıdır. SMTP kabulü yalnız `SENT` sayılır; `DELIVERED` veya `READ` üretilmez.
+
+Inbound HTML allowlist ile sanitize edilmeden saklanmaz; UI metin gövdesini kullanmaya devam eder. JPEG, PNG, WebP ve PDF ekleri attachment başına en fazla 10 MB olacak şekilde rastgele disk adı, normalize filename ve SHA-256 ile `ATTACHMENTS_DIR` altında saklanır. Desteklenmeyen/büyük ek atlanır, email korunur ve güvenli skip metadata'sı yazılır. Hub'dan outbound attachment gönderimi bu sürümün kapsamında değildir.
+
 Development mock inbound, yalnız mock modu açıkken ve `manage_channels` izniyle `POST /api/dev/mock/inbound` üzerinden gönderilebilir. Bu endpoint production'da 404'tür.
 
 ## Yeni adapter geliştirme
@@ -90,7 +119,7 @@ Development mock inbound, yalnız mock modu açıkken ve `manage_channels` izniy
 5. Retry edilebilir hata için `ProviderError(..., true, code)` kullan.
 6. Registry'ye ekle, normalization/capability/error mapping testlerini yaz.
 
-Dokümante edilmemiş endpoint, scraping veya browser automation kullanılmaz. Email provider'ı `EmailProvider` interface'i arkasındadır ve threading `Message-ID`, `In-Reply-To`, `References` sırasını kullanır.
+Dokümante edilmemiş endpoint, scraping veya browser automation kullanılmaz. Email transport'ları account-scoped factory sınırının arkasındadır ve threading `Message-ID`, `In-Reply-To`, `References` sırasını kullanır.
 
 ## Güvenlik
 

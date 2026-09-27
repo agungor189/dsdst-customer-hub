@@ -4,6 +4,7 @@ import type { ChannelAdapter } from "./types.js";
 import { DevelopmentMockAdapter, FoundationAdapter } from "./base.js";
 import { TrendyolAdapter } from "../trendyol/adapter.js";
 import { WhatsAppCloudAdapter } from "../whatsapp/adapter.js";
+import { EmailAdapter } from "../email/adapter.js";
 
 const caps = (...values: Capability[]) => new Set(values);
 
@@ -12,7 +13,7 @@ export function createAdapterRegistry(config: AppConfig) {
     new FoundationAdapter("META_INSTAGRAM", caps("READ_MESSAGES","SEND_MESSAGES","WEBHOOK","ATTACHMENTS","MARK_READ","CUSTOMER_PROFILE"), ["access_token","account_id"]),
     new FoundationAdapter("META_FACEBOOK", caps("READ_MESSAGES","SEND_MESSAGES","WEBHOOK","ATTACHMENTS","MARK_READ","CUSTOMER_PROFILE"), ["access_token","page_id"]),
     new WhatsAppCloudAdapter({ timeoutMs: config.outboundTimeoutMs }),
-    new FoundationAdapter("EMAIL", caps("READ_MESSAGES","SEND_MESSAGES","POLLING","ATTACHMENTS","CUSTOMER_PROFILE"), ["imap_host","smtp_host","username","password"]),
+    new EmailAdapter({ timeoutMs: config.outboundTimeoutMs, attachmentsDir: config.attachmentsDir }),
     config.mockAdaptersEnabled ? new DevelopmentMockAdapter("WEBSITE", caps("READ_MESSAGES","SEND_MESSAGES","WEBHOOK","ATTACHMENTS")) : new FoundationAdapter("WEBSITE", caps("READ_MESSAGES","SEND_MESSAGES","WEBHOOK","ATTACHMENTS"), ["webhook_secret","send_endpoint"]),
     new TrendyolAdapter({ timeoutMs: config.outboundTimeoutMs }),
     new FoundationAdapter("N11", caps("READ_MESSAGES","SEND_MESSAGES","POLLING","PRODUCT_QUESTIONS"), ["api_key","api_secret"]),

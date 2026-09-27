@@ -7,12 +7,15 @@ const normalizeEmail = (value?: string) => value?.trim().toLowerCase() || null;
 
 export function ingestInbound(db: Database.Database, channelType: ChannelType, input: NormalizedInboundMessage) {
   return db.transaction(() => {
-    const duplicateEvent = db.prepare("SELECT processed_at FROM webhook_events WHERE provider=? AND external_event_id=?").get(channelType, input.eventId) as {processed_at: string|null}|undefined;
-    if (duplicateEvent?.processed_at) return { duplicate: true, messageId: null, conversationId: null };
-    db.prepare("INSERT OR IGNORE INTO webhook_events(id,provider,external_event_id,signature_valid,payload_json) VALUES(?,?,?,?,?)")
-      .run(randomUUID(), channelType, input.eventId, 1, JSON.stringify(input));
     const account = db.prepare("SELECT id FROM channel_accounts WHERE channel_type=? AND external_account_id=?").get(channelType, input.externalAccountId) as {id:string}|undefined;
     if (!account) throw new Error("CHANNEL_ACCOUNT_NOT_FOUND");
+    const duplicateEvent = db.prepare("SELECT processed_at FROM webhook_events WHERE provider=? AND external_event_id=?").get(channelType, input.eventId) as {processed_at: string|null}|undefined;
+    if (duplicateEvent?.processed_at) {
+      const message=db.prepare("SELECT id,conversation_id FROM messages WHERE channel_account_id=? AND external_message_id=?").get(account.id,input.externalMessageId) as {id:string;conversation_id:string}|undefined;
+      return {duplicate:true,messageId:message?.id??null,conversationId:message?.conversation_id??null};
+    }
+    db.prepare("INSERT OR IGNORE INTO webhook_events(id,provider,external_event_id,signature_valid,payload_json) VALUES(?,?,?,?,?)")
+      .run(randomUUID(), channelType, input.eventId, 1, JSON.stringify(input));
     const duplicateMessage = db.prepare("SELECT id,conversation_id FROM messages WHERE channel_account_id=? AND external_message_id=?").get(account.id, input.externalMessageId) as any;
     if (duplicateMessage) {
       db.prepare("UPDATE webhook_events SET processed_at=CURRENT_TIMESTAMP WHERE provider=? AND external_event_id=?").run(channelType,input.eventId);
