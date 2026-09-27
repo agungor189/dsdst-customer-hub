@@ -13,6 +13,7 @@ const permissions={"customer_hub:view":true,"customer_hub:reply":true,"customer_
 const users:Record<string,PanelUser>={
   alper:{id:"alper",username:"Alper",role:"user",permissions},
   tayfun:{id:"tayfun",username:"Tayfun",role:"user",permissions},
+  basic:{id:"basic",username:"Temel Kullanıcı",role:"user",permissions:{"customer_hub:view":true}},
   boss:{id:"boss",username:"Yönetici",role:"admin",permissions:{}},
 };
 
@@ -53,6 +54,10 @@ test("personal email data is owner-only while shared channels remain collaborati
   assert.ok(!tayfunItems.some(item=>item.channel_type==="EMAIL"));
   assert.ok(["TRENDYOL","META_WHATSAPP","META_INSTAGRAM","META_FACEBOOK","WEBSITE"].every(type=>tayfunItems.some(item=>item.channel_type===type)));
   assert.ok(["TRENDYOL","META_WHATSAPP","META_INSTAGRAM","META_FACEBOOK","WEBSITE"].every(type=>alperItems.some(item=>item.channel_type===type)));
+  const adminInbox=await request("boss","/api/conversations");
+  const adminItems=(await adminInbox.json() as any).items as any[];
+  assert.ok(!adminItems.some(item=>item.id===email.conversation_id));
+  assert.equal((await request("boss",`/api/conversations/${email.conversation_id}`)).status,404);
   assert.equal(tayfunItems.reduce((sum,item)=>sum+item.unread_count,0),alperItems.reduce((sum,item)=>sum+item.unread_count,0)-9);
   const hiddenSearch=await request("tayfun","/api/conversations?q=PRIVATE-SEARCH-TOKEN");
   assert.deepEqual((await hiddenSearch.json() as any).items,[]);
@@ -93,16 +98,28 @@ test("personal email data is owner-only while shared channels remain collaborati
   assert.deepEqual(outbound.map(row=>JSON.parse(row.metadata_json)._hub_agent_username),["Alper","Tayfun"]);
 
   const tayfunChannels=await request("tayfun","/api/channels");
-  assert.ok(!(await tayfunChannels.json() as any).items.some((item:any)=>item.id===email.account_id));
+  const tayfunChannelItems=(await tayfunChannels.json() as any).items as any[];
+  assert.ok(!tayfunChannelItems.some((item:any)=>item.id===email.account_id));
+  assert.ok(tayfunChannelItems.every((item:any)=>item.channel_type==="EMAIL"&&item.owner_user_id==="tayfun"));
   assert.equal((await request("tayfun",`/api/channels/${email.account_id}/config`)).status,404);
   assert.equal((await request("boss",`/api/channels/${email.account_id}/config`)).status,404);
   assert.equal((await request("boss",`/api/channels/${email.account_id}/claim`,{method:"POST"})).status,404);
+  for(const channelType of ["TRENDYOL","META_WHATSAPP","META_INSTAGRAM","META_FACEBOOK","WEBSITE"] as ChannelType[]){
+    const account=db.prepare("SELECT id FROM channel_accounts WHERE channel_type=? LIMIT 1").get(channelType) as {id:string};
+    assert.equal((await request("tayfun",`/api/channels/${account.id}/config`)).status,404,`${channelType} config GET`);
+    assert.equal((await request("tayfun",`/api/channels/${account.id}`,{method:"PUT",body:JSON.stringify({id:account.id,channel_type:channelType,name:"Yetkisiz",credentials:{}})})).status,404,`${channelType} config PUT`);
+    assert.equal((await request("tayfun","/api/channels",{method:"POST",body:JSON.stringify({channel_type:channelType,name:"Yetkisiz",external_account_id:`forbidden-${channelType.toLowerCase()}`,credentials:{}})})).status,403,`${channelType} config POST`);
+  }
   const forged=await request("tayfun","/api/channels",{method:"POST",body:JSON.stringify({channel_type:"EMAIL",name:"Forged",external_account_id:"forged@example.test",owner_user_id:"alper",credentials:{}})});assert.equal(forged.status,400);
   const created=await request("tayfun","/api/channels",{method:"POST",body:JSON.stringify({channel_type:"EMAIL",name:"Tayfun Mail",external_account_id:"tayfun@example.test",credentials:{}})});assert.equal(created.status,201);const createdBody=await created.json() as any;assert.equal(createdBody.owner_user_id,"tayfun");assert.equal((db.prepare("SELECT owner_user_id FROM channel_accounts WHERE id=?").get(createdBody.id) as any).owner_user_id,"tayfun");
+  const basicCreated=await request("basic","/api/channels",{method:"POST",body:JSON.stringify({channel_type:"EMAIL",name:"Basic Mail",external_account_id:"basic@example.test",credentials:{mailbox_email:"basic@example.test"}})});assert.equal(basicCreated.status,201);const basicBody=await basicCreated.json() as any;assert.equal(basicBody.owner_user_id,"basic");assert.equal((await request("basic",`/api/channels/${basicBody.id}/config`)).status,200);
+  const basicUpdated=await request("basic",`/api/channels/${basicBody.id}`,{method:"PUT",body:JSON.stringify({id:basicBody.id,channel_type:"EMAIL",name:"Basic Mail Updated",external_account_id:"basic@example.test",credentials:{mailbox_email:"basic@example.test"},polling_interval_seconds:60})});assert.equal(basicUpdated.status,200,await basicUpdated.text());
+  assert.equal((await request("tayfun",`/api/channels/${basicBody.id}/config`)).status,404);
 
   const legacyId=randomUUID();db.prepare("INSERT INTO channel_accounts(id,channel_type,name,status,external_account_id,owner_user_id) VALUES(?,'EMAIL','Legacy','NOT_CONFIGURED','legacy@example.test',NULL)").run(legacyId);
   const legacyList=await request("boss","/api/channels");const legacyItem=(await legacyList.json() as any).items.find((item:any)=>item.id===legacyId);assert.equal(legacyItem.claimable,true);
   const claimed=await request("boss",`/api/channels/${legacyId}/claim`,{method:"POST"});assert.equal(claimed.status,200,await claimed.text());assert.equal((db.prepare("SELECT owner_user_id FROM channel_accounts WHERE id=?").get(legacyId) as any).owner_user_id,"boss");
+  assert.equal((await request("boss",`/api/channels/${legacyId}/config`)).status,200);
   const claimAudit=db.prepare("SELECT actor_user_id,payload_json FROM audit_logs WHERE action='CHANNEL_OWNERSHIP_CLAIMED' AND entity_id=?").get(legacyId) as any;assert.equal(claimAudit.actor_user_id,"boss");assert.equal(JSON.parse(claimAudit.payload_json).owner_user_id,"boss");
 
   server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));db.close();

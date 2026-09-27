@@ -74,7 +74,20 @@ test("secret rotation is isolated to the selected channel account and audit rema
   db.close();
 });
 
-test("channel config mutations enforce permission and account identity",async()=>{
+test("admin can create and rotate a shared Website connection",async()=>{
+  const {db,config,base}=await start(admin);
+  const created=await request(base,"/api/channels",{method:"POST",body:JSON.stringify({channel_type:"WEBSITE",name:"Admin Website",external_account_id:"admin-site",credentials:{site_id:"admin-site",site_name:"Admin Site",allowed_origins:'["https://admin.example.test"]',widget_secret:"first-widget-secret"}})});
+  assert.equal(created.status,201);
+  const account=await created.json() as any;
+  assert.equal(account.owner_user_id,null);
+  const updated=await request(base,`/api/channels/${account.id}`,{method:"PUT",body:JSON.stringify({id:account.id,channel_type:"WEBSITE",name:"Admin Website",external_account_id:"admin-site",credentials:{site_id:"admin-site",site_name:"Admin Site",allowed_origins:'["https://admin.example.test"]',widget_secret:"rotated-widget-secret"}})});
+  assert.equal(updated.status,200,await updated.text());
+  const stored=decryptSecret<Record<string,string>>((db.prepare("SELECT encrypted_credentials FROM channel_accounts WHERE id=?").get(account.id) as any).encrypted_credentials,config.encryptionKey);
+  assert.equal(stored.widget_secret,"rotated-widget-secret");
+  db.close();
+});
+
+test("channel config mutations enforce admin-only shared configuration and account identity",async()=>{
   const adminState=await start(admin);const id=installTrendyol(adminState.db,adminState.config,"seller-match",{api_key:"key",api_secret:"secret"});
   const mismatch=await request(adminState.base,`/api/channels/${id}`,{method:"PUT",body:JSON.stringify({id:randomUUID(),channel_type:"TRENDYOL",name:"Yanlış",credentials:{seller_id:"seller-match"}})});
   assert.equal(mismatch.status,409);
@@ -83,15 +96,15 @@ test("channel config mutations enforce permission and account identity",async()=
   adminState.db.close();
 
   const readerState=await start(readonly);const readerId=installTrendyol(readerState.db,readerState.config,"seller-reader",{api_key:"key",api_secret:"secret"});
-  assert.equal((await request(readerState.base,`/api/channels/${readerId}/config`)).status,200);
+  assert.equal((await request(readerState.base,`/api/channels/${readerId}/config`)).status,404);
   const forbidden=await request(readerState.base,`/api/channels/${readerId}`,{method:"PUT",body:JSON.stringify({id:readerId,channel_type:"TRENDYOL",name:"Nope",credentials:{seller_id:"seller-reader"}})});
-  assert.equal(forbidden.status,403);
+  assert.equal(forbidden.status,404);
   readerState.db.close();
 });
 
 test("email signature is account-scoped, returned as non-secret config and sanitized on update",async()=>{
   const {db,config,base}=await start(admin);const id=randomUUID();const credentials={mailbox_email:"support@example.test",imap_host:"imap.example.test",imap_port:"993",imap_secure:"true",smtp_host:"smtp.example.test",smtp_port:"465",smtp_secure:"true",username:"support@example.test",password:"app-password",from_address:"support@example.test",imap_mailbox:"INBOX"};
-  db.prepare("INSERT INTO channel_accounts(id,channel_type,name,status,encrypted_credentials,external_account_id,polling_interval_seconds) VALUES(?,'EMAIL','Support','ACTIVE',?,'support@example.test',60)").run(id,encryptSecret(credentials,config.encryptionKey));
+  db.prepare("INSERT INTO channel_accounts(id,channel_type,name,status,encrypted_credentials,external_account_id,polling_interval_seconds,owner_user_id) VALUES(?,'EMAIL','Support','ACTIVE',?,'support@example.test',60,'admin')").run(id,encryptSecret(credentials,config.encryptionKey));
   const malicious='<table style="border-collapse:collapse"><tbody><tr><td><strong>DSDST</strong><img src="https://cdn.example.test/logo.png" onerror="steal()"><a href="javascript:steal()">bad</a><iframe src="https://evil.test"></iframe></td></tr></tbody></table>';
   const update=await request(base,`/api/channels/${id}`,{method:"PUT",body:JSON.stringify({id,channel_type:"EMAIL",name:"Support",credentials:{...credentials,password:"",signature_enabled:"true",signature_html:malicious},polling_interval_seconds:60})});assert.equal(update.status,200,await update.text());
   const response=await request(base,`/api/channels/${id}/config`);const body=await response.json()as any;assert.equal(body.non_secret_config.signature_enabled,"true");assert.match(body.non_secret_config.signature_html,/<table/);assert.match(body.non_secret_config.signature_html,/https:\/\/cdn\.example\.test\/logo\.png/);assert.doesNotMatch(body.non_secret_config.signature_html,/onerror|javascript:|iframe/i);assert.equal(body.secret_state.password,true);
@@ -100,7 +113,7 @@ test("email signature is account-scoped, returned as non-secret config and sanit
 
 test("attachment download serves only verified files inside the attachment root",async()=>{
   const {db,config,base}=await start(admin);
-  const account=db.prepare("SELECT id FROM channel_accounts LIMIT 1").get() as {id:string};
+  const account=db.prepare("SELECT id FROM channel_accounts WHERE channel_type='WEBSITE' LIMIT 1").get() as {id:string};
   const contactId=randomUUID(),conversationId=randomUUID(),messageId=randomUUID(),safeId=randomUUID(),unsafeId=randomUUID();
   db.prepare("INSERT INTO contacts(id,display_name) VALUES(?,?)").run(contactId,"Dosya Testi");
   db.prepare("INSERT INTO conversations(id,channel_account_id,contact_id,external_conversation_id) VALUES(?,?,?,?)").run(conversationId,account.id,contactId,randomUUID());

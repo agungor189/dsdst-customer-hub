@@ -10,10 +10,21 @@ export function conversationAccountScope(alias: string, user: PanelUser): SqlSco
   };
 }
 
-export function settingsAccountScope(alias: string, user: PanelUser): SqlScope {
+export function channelSettingsListScope(alias: string, user: PanelUser): SqlScope {
   return {
-    sql: `(${alias}.channel_type <> 'EMAIL' OR ${alias}.owner_user_id = ? OR (${alias}.owner_user_id IS NULL AND ? = 1))`,
-    params: [user.id, user.role === "admin" ? 1 : 0],
+    sql: user.role === "admin"
+      ? `(${alias}.channel_type <> 'EMAIL' OR ${alias}.owner_user_id = ? OR ${alias}.owner_user_id IS NULL)`
+      : `(${alias}.channel_type = 'EMAIL' AND ${alias}.owner_user_id = ?)`,
+    params: [user.id],
+  };
+}
+
+export function channelConfigScope(alias: string, user: PanelUser): SqlScope {
+  return {
+    sql: user.role === "admin"
+      ? `(${alias}.channel_type <> 'EMAIL' OR (${alias}.channel_type = 'EMAIL' AND ${alias}.owner_user_id = ?))`
+      : `(${alias}.channel_type = 'EMAIL' AND ${alias}.owner_user_id = ?)`,
+    params: [user.id],
   };
 }
 
