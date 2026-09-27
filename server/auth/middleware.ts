@@ -33,7 +33,7 @@ export function requirePermission(permission: CustomerHubPermission) {
 export function csrfOrigin(config: AppConfig) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (["GET","HEAD","OPTIONS"].includes(req.method)) return next();
-    if (req.path === "/api/webhooks/meta") return next();
+    if (req.path === "/api/webhooks/meta" || req.path.startsWith("/api/public/chat")) return next();
     const origin = req.headers.origin;
     if (origin !== config.appOrigin) return res.status(403).json({ error: { code: "CSRF_ORIGIN_REJECTED", message: "Geçersiz veya eksik istek kaynağı." } });
     next();

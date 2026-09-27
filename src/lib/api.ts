@@ -1,2 +1,20 @@
 export class ApiError extends Error { constructor(message:string,public status:number,public code?:string){super(message);} }
-export async function api<T>(path:string,init:RequestInit={}):Promise<T>{const response=await fetch(`/api${path}`,{...init,credentials:"same-origin",headers:{...(init.body instanceof FormData?{}:{"content-type":"application/json"}),...init.headers}});if(response.status===204)return undefined as T;const body=await response.json().catch(()=>({}));if(!response.ok)throw new ApiError(body?.error?.message??"İşlem tamamlanamadı",response.status,body?.error?.code);return body as T;}
+export const domainErrorMessage:Record<string,string>={
+  WHATSAPP_TEMPLATE_REQUIRED:"24 saatlik yanıt penceresi kapalı. Onaylı bir template gönderin.",
+  WHATSAPP_WABA_REQUIRED:"Template’leri görmek için WABA / Business Account ID gerekli.",
+  WHATSAPP_TEMPLATE_NOT_APPROVED:"Seçilen WhatsApp template’i onaylı değil.",
+  WHATSAPP_TEMPLATE_NOT_FOUND:"Seçilen WhatsApp template’i bu hesapta bulunamadı.",
+  WHATSAPP_TEMPLATE_COMPONENT_UNSUPPORTED:"Bu template henüz desteklenmeyen bir bileşen içeriyor.",
+  FACEBOOK_MESSAGE_WINDOW_CLOSED:"Facebook mesajlaşma penceresi kapalı.",
+  INSTAGRAM_CONVERSATION_NOT_STARTED:"Müşteri Instagram’da konuşmayı başlatmadan yanıt gönderilemez.",
+  EMAIL_RECIPIENT_MISSING:"Bu e-posta konuşmasında yanıt alıcısı bulunamadı.",
+  PROVIDER_VALIDATION_FAILED:"Kanal sağlayıcısı mesajı veya ayarları kabul etmedi.",
+  AUTHENTICATION_FAILED:"Kanal kimlik bilgileri doğrulanamadı.",
+  AUTHORIZATION_FAILED:"Kanal hesabının bu işlem için yetkisi yok.",
+  RATE_LIMITED:"Kanal sağlayıcısının hız sınırına ulaşıldı. Lütfen biraz sonra deneyin.",
+  PROVIDER_UNAVAILABLE:"Kanal sağlayıcısına şu anda ulaşılamıyor.",
+  VALIDATION_ERROR:"Lütfen işaretli alanları kontrol edin.",
+  CHANNEL_ACCOUNT_MISMATCH:"Kanal hesabı ile gönderilen ayarlar eşleşmiyor.",
+  FORBIDDEN:"Bu işlem için yetkiniz yok.",
+};
+export async function api<T>(path:string,init:RequestInit={}):Promise<T>{const response=await fetch(`/api${path}`,{...init,credentials:"same-origin",headers:{...(init.body instanceof FormData?{}:{"content-type":"application/json"}),...init.headers}});if(response.status===204)return undefined as T;const body=await response.json().catch(()=>({}));if(!response.ok){const code=body?.error?.code;throw new ApiError(domainErrorMessage[code]??body?.error?.message??"İşlem tamamlanamadı",response.status,code);}return body as T;}

@@ -100,4 +100,27 @@ export const migrations: Migration[] = [{
       UPDATE message_search SET body_text = new.body_text WHERE message_id = new.id;
     END;
   `,
+}, {
+  version: 2,
+  name: "website_live_chat_sessions",
+  sql: `
+    CREATE TABLE website_chat_sessions (
+      id TEXT PRIMARY KEY,
+      channel_account_id TEXT NOT NULL REFERENCES channel_accounts(id) ON DELETE CASCADE,
+      visitor_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      origin TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT 'Website Ziyaretçisi',
+      email TEXT,
+      normalized_email TEXT,
+      phone TEXT,
+      normalized_phone TEXT,
+      conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+      expires_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX website_sessions_account_visitor_idx ON website_chat_sessions(channel_account_id, visitor_id);
+    CREATE INDEX website_sessions_expiry_idx ON website_chat_sessions(expires_at);
+  `,
 }];

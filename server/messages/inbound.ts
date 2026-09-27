@@ -4,15 +4,23 @@ import type { ChannelType } from "../../shared/contracts/domain.js";
 import type { NormalizedInboundMessage } from "../channels/core/types.js";
 
 const normalizeEmail = (value?: string) => value?.trim().toLowerCase() || null;
+const normalizePhone = (value?: string) => {
+  if (!value?.trim()) return null;
+  const trimmed=value.trim(); const digits=trimmed.replace(/\D/g,"");
+  return digits ? `${trimmed.startsWith("+")?"+":""}${digits}` : null;
+};
 
 export function ingestInbound(db: Database.Database, channelType: ChannelType, input: NormalizedInboundMessage) {
   return db.transaction(() => {
-    const duplicateEvent = db.prepare("SELECT processed_at FROM webhook_events WHERE provider=? AND external_event_id=?").get(channelType, input.eventId) as {processed_at: string|null}|undefined;
-    if (duplicateEvent?.processed_at) return { duplicate: true, messageId: null, conversationId: null };
-    db.prepare("INSERT OR IGNORE INTO webhook_events(id,provider,external_event_id,signature_valid,payload_json) VALUES(?,?,?,?,?)")
-      .run(randomUUID(), channelType, input.eventId, 1, JSON.stringify(input));
     const account = db.prepare("SELECT id FROM channel_accounts WHERE channel_type=? AND external_account_id=?").get(channelType, input.externalAccountId) as {id:string}|undefined;
     if (!account) throw new Error("CHANNEL_ACCOUNT_NOT_FOUND");
+    const duplicateEvent = db.prepare("SELECT processed_at FROM webhook_events WHERE provider=? AND external_event_id=?").get(channelType, input.eventId) as {processed_at: string|null}|undefined;
+    if (duplicateEvent?.processed_at) {
+      const message=db.prepare("SELECT id,conversation_id FROM messages WHERE channel_account_id=? AND external_message_id=?").get(account.id,input.externalMessageId) as {id:string;conversation_id:string}|undefined;
+      return {duplicate:true,messageId:message?.id??null,conversationId:message?.conversation_id??null};
+    }
+    db.prepare("INSERT OR IGNORE INTO webhook_events(id,provider,external_event_id,signature_valid,payload_json) VALUES(?,?,?,?,?)")
+      .run(randomUUID(), channelType, input.eventId, 1, JSON.stringify(input));
     const duplicateMessage = db.prepare("SELECT id,conversation_id FROM messages WHERE channel_account_id=? AND external_message_id=?").get(account.id, input.externalMessageId) as any;
     if (duplicateMessage) {
       db.prepare("UPDATE webhook_events SET processed_at=CURRENT_TIMESTAMP WHERE provider=? AND external_event_id=?").run(channelType,input.eventId);
@@ -21,11 +29,19 @@ export function ingestInbound(db: Database.Database, channelType: ChannelType, i
     let identity = db.prepare("SELECT contact_id FROM contact_identities WHERE channel_account_id=? AND external_user_id=?").get(account.id,input.externalUserId) as {contact_id:string}|undefined;
     if (!identity) {
       const contactId = randomUUID();
-      const email = channelType === "EMAIL" ? normalizeEmail(input.externalUserId) : null;
-      db.prepare("INSERT INTO contacts(id,display_name,email,normalized_email) VALUES(?,?,?,?)").run(contactId,input.displayName,email,email);
+      const email = input.email?.trim() || (channelType === "EMAIL" ? input.externalUserId : null);
+      const normalizedEmail = normalizeEmail(email ?? undefined);
+      const phone = input.phone?.trim() || null;
+      db.prepare("INSERT INTO contacts(id,display_name,email,normalized_email,phone,normalized_phone) VALUES(?,?,?,?,?,?)").run(contactId,input.displayName,email,normalizedEmail,phone,normalizePhone(phone ?? undefined));
       db.prepare("INSERT INTO contact_identities(id,contact_id,channel_type,channel_account_id,external_user_id,username,raw_metadata_json) VALUES(?,?,?,?,?,?,?)")
         .run(randomUUID(),contactId,channelType,account.id,input.externalUserId,input.username??null,JSON.stringify(input.metadata));
       identity = {contact_id:contactId};
+    } else if (input.email || input.phone || input.displayName !== "Website Ziyaretçisi") {
+      db.prepare(`UPDATE contacts SET
+        display_name=CASE WHEN ?<>'Website Ziyaretçisi' THEN ? ELSE display_name END,
+        email=COALESCE(?,email),normalized_email=COALESCE(?,normalized_email),
+        phone=COALESCE(?,phone),normalized_phone=COALESCE(?,normalized_phone),updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .run(input.displayName,input.displayName,input.email?.trim()||null,normalizeEmail(input.email),input.phone?.trim()||null,normalizePhone(input.phone),identity.contact_id);
     }
     let conversation = db.prepare("SELECT id FROM conversations WHERE channel_account_id=? AND external_conversation_id=?").get(account.id,input.externalConversationId) as {id:string}|undefined;
     if (!conversation) {
@@ -34,8 +50,8 @@ export function ingestInbound(db: Database.Database, channelType: ChannelType, i
         .run(conversation.id,account.id,identity.contact_id,input.externalConversationId,input.subject??null,input.externalCreatedAt,JSON.stringify(input.metadata));
     }
     const messageId = randomUUID();
-    db.prepare("INSERT INTO messages(id,conversation_id,channel_account_id,external_message_id,direction,sender_type,body_text,message_type,status,external_created_at,received_at) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)")
-      .run(messageId,conversation.id,account.id,input.externalMessageId,"INBOUND","CUSTOMER",input.body,input.messageType,"RECEIVED",input.externalCreatedAt);
+    db.prepare("INSERT INTO messages(id,conversation_id,channel_account_id,external_message_id,direction,sender_type,body_text,message_type,status,external_created_at,received_at,metadata_json) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,?)")
+      .run(messageId,conversation.id,account.id,input.externalMessageId,"INBOUND","CUSTOMER",input.body,input.messageType,"RECEIVED",input.externalCreatedAt,JSON.stringify(input.metadata));
     db.prepare("UPDATE conversations SET status=CASE WHEN status IN ('CLOSED','RESOLVED') THEN 'OPEN' ELSE status END,last_message_at=?,unread_count=unread_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=?")
       .run(input.externalCreatedAt,conversation.id);
     db.prepare("UPDATE webhook_events SET processed_at=CURRENT_TIMESTAMP WHERE provider=? AND external_event_id=?").run(channelType,input.eventId);
