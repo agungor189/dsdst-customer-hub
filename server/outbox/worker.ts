@@ -4,6 +4,7 @@ import type { AdapterRegistry } from "../channels/core/registry.js";
 import { decryptSecret, redactCredentialValues } from "../security/crypto.js";
 import { ProviderError } from "../channels/core/types.js";
 import { retryDelaySeconds } from "./service.js";
+import { AttachmentError, loadMessageAttachments } from "../attachments/storage.js";
 
 export class OutboxWorker {
   private timer?: NodeJS.Timeout; private running=false; private lastRunAt: string|null=null;
@@ -19,7 +20,8 @@ export class OutboxWorker {
       let credentials:Record<string,string>|null=null;
       try {
         credentials=job.encrypted_credentials ? decryptSecret<Record<string,string>>(job.encrypted_credentials,this.config.encryptionKey) : null;
-        const envelope={messageId:job.message_id,externalConversationId:job.external_conversation_id,body:job.body_text,metadata:{...JSON.parse(job.conversation_metadata_json||"{}"),...JSON.parse(job.metadata_json||"{}")}};
+        const attachments=loadMessageAttachments(this.db,this.config.attachmentsDir,job.message_id);
+        const envelope={messageId:job.message_id,externalConversationId:job.external_conversation_id,body:job.body_text,metadata:{...JSON.parse(job.conversation_metadata_json||"{}"),...JSON.parse(job.metadata_json||"{}")},attachments};
         const account={id:job.channel_account_id,externalAccountId:job.external_account_id,credentials};
         adapter.validateReply?.(envelope,{...account,db:this.db,phase:"SEND"});
         const result=await adapter.sendMessage(envelope,account);
@@ -28,7 +30,7 @@ export class OutboxWorker {
           this.db.prepare("UPDATE outbox_jobs SET status='COMPLETED',locked_at=NULL,locked_by=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND locked_by=?").run(job.id,this.workerId);
         })();
       } catch(error){
-        const providerError=error instanceof ProviderError?error:new ProviderError(error instanceof Error?error.message:"Provider error",true,"UNKNOWN");
+        const providerError=error instanceof ProviderError?error:error instanceof AttachmentError?new ProviderError(error.message,false,error.code):new ProviderError(error instanceof Error?error.message:"Provider error",true,"UNKNOWN");
         const safeError=redactCredentialValues(`${providerError.code}: ${providerError.message}`,credentials).slice(0,1000);
         const attempts=job.attempt_count+1; const terminal=!providerError.retryable||attempts>=5; const delay=retryDelaySeconds(attempts);
         this.db.transaction(()=>{

@@ -1,4 +1,5 @@
 import type { ChannelType } from "../../shared/contracts/domain.js";
+import { sanitizeEmailSignatureHtml } from "./email/signature.js";
 
 export type ChannelConfigDefinition = {
   credentialKeys: readonly string[];
@@ -24,7 +25,7 @@ export const channelConfigDefinitions: Partial<Record<ChannelType,ChannelConfigD
     secretKeys:["access_token"],externalAccountKey:"ig_account_id",
   },
   EMAIL: {
-    credentialKeys:["mailbox_email","imap_host","imap_port","imap_secure","smtp_host","smtp_port","smtp_secure","username","password","from_address","from_name","reply_to","imap_mailbox"],
+    credentialKeys:["mailbox_email","imap_host","imap_port","imap_secure","smtp_host","smtp_port","smtp_secure","username","password","from_address","from_name","reply_to","imap_mailbox","signature_enabled","signature_html"],
     secretKeys:["password"],externalAccountKey:"mailbox_email",
   },
   WEBSITE: {
@@ -54,7 +55,8 @@ export function mergeChannelConfig(channelType:ChannelType, existing:Record<stri
     if(!(key in incoming)) continue;
     const value=incoming[key];
     if(secretKeys.has(key)&&value.trim()==="") continue;
-    merged[key]=value;
+    merged[key]=channelType==="EMAIL"&&key==="signature_html"?sanitizeEmailSignatureHtml(value):value;
   }
+  if(channelType==="EMAIL")merged.signature_enabled=merged.signature_enabled==="true"?"true":"false";
   return {credentials:merged,externalAccountId:merged[definition.externalAccountKey]?.trim()??"",secretKeysUpdated:definition.secretKeys.filter(key=>incoming[key]?.length>0)};
 }

@@ -1,11 +1,11 @@
-import {useCallback,useEffect,useMemo,useState} from "react";
+import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {AtSign,Check,ChevronLeft,Clipboard,Eye,EyeOff,Globe2,Mail,MessageCircle,RefreshCw,Settings2,ShoppingBag,X} from "lucide-react";
 import type {ChannelType,PanelUser} from "../../../shared/contracts/domain";
 import {api,ApiError} from "../../lib/api";
 
 type Account={id:string;channel_type:ChannelType;name:string;status:string;external_account_id:string;polling_interval_seconds:number|null;last_sync_at:string|null;last_error:string|null;next_retry_at:string|null};
 type Config=Account&{non_secret_config:Record<string,string>;secret_state:Record<string,boolean>;app_origin:string};
-type Field={key:string;label:string;kind?:"password"|"select"|"checkbox"|"origins";required?:boolean;optionalSecret?:boolean;options?:Array<[string,string]>;placeholder?:string};
+type Field={key:string;label:string;kind?:"password"|"select"|"checkbox"|"origins"|"signature";required?:boolean;optionalSecret?:boolean;options?:Array<[string,string]>;placeholder?:string;wide?:boolean};
 type Provider={type:ChannelType;label:string;description:string;Icon:typeof Mail;fields:Field[];externalKey:string;polling:boolean};
 
 const providers:Provider[]=[
@@ -26,6 +26,7 @@ const providers:Provider[]=[
     {key:"mailbox_email",label:"Mailbox e-posta / external account",required:true},{key:"imap_host",label:"IMAP Host",required:true},{key:"imap_port",label:"IMAP Port",required:true},{key:"imap_secure",label:"IMAP SSL/TLS",kind:"checkbox"},
     {key:"smtp_host",label:"SMTP Host",required:true},{key:"smtp_port",label:"SMTP Port",required:true},{key:"smtp_secure",label:"SMTP SSL/TLS",kind:"checkbox"},{key:"username",label:"Username",required:true},{key:"password",label:"Password / App Password",kind:"password",required:true},
     {key:"from_address",label:"From Address",required:true},{key:"from_name",label:"From Name"},{key:"reply_to",label:"Reply-To"},{key:"imap_mailbox",label:"Mailbox",required:true},
+    {key:"signature_enabled",label:"İmzayı otomatik ekle",kind:"checkbox"},{key:"signature_html",label:"E-POSTA İMZASI",kind:"signature",wide:true},
   ]},
   {type:"WEBSITE",label:"Website Chat",description:"Site içi canlı destek widget’ı",Icon:Globe2,externalKey:"site_id",polling:false,fields:[
     {key:"site_id",label:"Site ID",required:true},{key:"site_name",label:"Site Name",required:true},{key:"allowed_origins",label:"Allowed Origins",kind:"origins",required:true,placeholder:"https://magaza.example"},{key:"widget_secret",label:"Widget Secret (opsiyonel)",kind:"password",optionalSecret:true},
@@ -33,7 +34,7 @@ const providers:Provider[]=[
 ];
 
 const defaults:Record<string,Record<string,string>>={
-  TRENDYOL:{environment:"production"},EMAIL:{imap_port:"993",imap_secure:"true",smtp_port:"465",smtp_secure:"true",imap_mailbox:"INBOX"},WEBSITE:{allowed_origins:"[]"},
+  TRENDYOL:{environment:"production"},EMAIL:{imap_port:"993",imap_secure:"true",smtp_port:"465",smtp_secure:"true",imap_mailbox:"INBOX",signature_enabled:"false",signature_html:""},WEBSITE:{allowed_origins:"[]"},
 };
 
 export function ChannelSettings({user,onBack}:{user:PanelUser;onBack:()=>void}){
@@ -68,6 +69,7 @@ function ChannelEditor({provider,account,config,canManage,onClose,onSaved}:{prov
 }
 
 function FieldInput({field,value,stored,disabled,visible,error,origins,onVisible,onChange}:{field:Field;value:string;stored:boolean;disabled:boolean;visible:boolean;error?:string;origins:string[];onVisible:()=>void;onChange:(value:string)=>void}){
+  if(field.kind==="signature")return <SignatureEditor value={value} disabled={disabled} error={error} onChange={onChange}/>;
   if(field.kind==="origins")return <FieldShell label={field.label} error={error} wide>
     <div className="origin-input">
       <div className="origin-chips">{origins.map(origin=><span key={origin}>{origin}<button type="button" aria-label={`${origin} kaldır`} disabled={disabled} onClick={()=>onChange(JSON.stringify(origins.filter(item=>item!==origin)))}><X size={12}/></button></span>)}</div>
@@ -87,7 +89,14 @@ function FieldInput({field,value,stored,disabled,visible,error,origins,onVisible
   if(field.kind==="checkbox")return <FieldShell label={field.label} error={error}><label className="switch-field"><input type="checkbox" checked={value==="true"} disabled={disabled} onChange={e=>onChange(String(e.target.checked))}/><span>{value==="true"?"Açık":"Kapalı"}</span></label></FieldShell>;
   if(field.kind==="select")return <FieldShell label={field.label} error={error}><select value={value} disabled={disabled} onChange={e=>onChange(e.target.value)}>{field.options?.map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></FieldShell>;
   if(field.kind==="password")return <FieldShell label={field.label} error={error}><div className="secret-input"><input type={visible?"text":"password"} value={value} disabled={disabled} placeholder={stored?"••••••••  Kayıtlı":"Yeni secret girin"} onChange={e=>onChange(e.target.value)} autoComplete="new-password"/><button type="button" onClick={onVisible} disabled={disabled} aria-label={visible?"Secret’ı gizle":"Secret’ı göster"}>{visible?<EyeOff size={16}/>:<Eye size={16}/>}</button></div>{stored&&!value&&<small>Boş bırakırsanız kayıtlı değer korunur.</small>}</FieldShell>;
-  return <FieldShell label={field.label} error={error}><input value={value} placeholder={field.placeholder} disabled={disabled} onChange={e=>onChange(e.target.value)}/></FieldShell>;
+  return <FieldShell label={field.label} error={error} wide={field.wide}><input value={value} placeholder={field.placeholder} disabled={disabled} onChange={e=>onChange(e.target.value)}/></FieldShell>;
+}
+
+function SignatureEditor({value,disabled,error,onChange}:{value:string;disabled:boolean;error?:string;onChange:(value:string)=>void}){
+  const editor=useRef<HTMLDivElement>(null);
+  useEffect(()=>{if(editor.current&&document.activeElement!==editor.current&&editor.current.innerHTML!==value)editor.current.innerHTML=value},[value]);
+  const preview=sanitizeSignatureForPreview(value);
+  return <FieldShell label="E-POSTA İMZASI" error={error} wide><div className="signature-editor" ref={editor} contentEditable={!disabled} suppressContentEditableWarning role="textbox" aria-multiline="true" data-placeholder="Gmail imzanızı buraya yapıştırın…" onInput={event=>onChange(event.currentTarget.innerHTML)} onPaste={event=>{event.preventDefault();const html=event.clipboardData.getData("text/html")||escapePreviewHtml(event.clipboardData.getData("text/plain")).replace(/\r?\n/g,"<br>");insertSanitizedHtml(sanitizeSignatureForPreview(html));onChange(event.currentTarget.innerHTML)}}/><small>Gmail’deki imzanızı biçimiyle birlikte kopyalayıp yapıştırabilirsiniz.</small><div className="signature-preview"><strong>Önizleme</strong>{preview?<div dangerouslySetInnerHTML={{__html:preview}}/>:<span>İmza önizlemesi burada görünür.</span>}</div></FieldShell>;
 }
 function FieldShell({label,error,wide,children}:{label:string;error?:string;wide?:boolean;children:React.ReactNode}){return <label className={`field-shell ${wide?"wide":""}`}><span>{label}</span>{children}{error&&<em>{error}</em>}</label>}
 function Status({value}:{value:string}){const labels:Record<string,string>={ACTIVE:"Bağlı",DEGRADED:"Sorun var",ERROR:"Hata",NOT_CONFIGURED:"Yapılandırılmadı"};return <span className={`health health-${value.toLowerCase()}`}>{labels[value]??value}</span>}
@@ -98,3 +107,30 @@ function parseOrigins(value?:string){if(!value)return[];try{const parsed=JSON.pa
 function validOrigin(value:string){try{const url=new URL(value);return url.origin===value&&!url.username&&!url.password&&(url.protocol==="https:"||(url.protocol==="http:"&&["localhost","127.0.0.1","::1"].includes(url.hostname)))}catch{return false}}
 function escapeAttribute(value:string){return value.replace(/[&"<>]/g,character=>({"&":"&amp;","\"":"&quot;","<":"&lt;",">":"&gt;"}[character]!))}
 function friendlyValidation(errors?:string[]){if(!errors?.length)return"zorunlu alanları kontrol edin.";const labels:Record<string,string>={seller_id:"Seller ID",api_key:"API Key",api_secret:"API Secret",access_token:"Access Token",phone_number_id:"Phone Number ID",business_account_id:"WABA ID",graph_api_version:"Graph API Version",page_id:"Page ID",ig_account_id:"Instagram Account ID",imap_host:"IMAP Host",smtp_host:"SMTP Host",username:"Username",password:"Password",allowed_origins:"Allowed Origins",site_id:"Site ID",site_name:"Site Name"};return errors.slice(0,3).map(error=>{const key=Object.keys(labels).find(item=>error.includes(item));return key?`${labels[key]} alanını kontrol edin`:"Alan değerlerini kontrol edin"}).join(" · ")}
+
+const signatureTags=new Set(["P","DIV","SPAN","BR","STRONG","B","EM","I","TABLE","TBODY","TR","TD","A","IMG"]);
+const signatureAttributes=new Set(["href","src","alt","title","width","height","target","rel","style"]);
+const signatureStyles=new Set(["color","background-color","font-family","font-size","font-weight","font-style","text-decoration","text-align","line-height","margin","padding","width","height","max-width","vertical-align","border-collapse"]);
+function escapePreviewHtml(value:string){const node=document.createElement("div");node.textContent=value;return node.innerHTML}
+function safeSignatureUrl(value:string,tag:string){try{const url=new URL(value,window.location.origin);if(value.startsWith("cid:"))return tag==="IMG"?value:"";if(url.protocol==="mailto:")return tag==="A"?value:"";return url.protocol==="http:"||url.protocol==="https:"?value:""}catch{return""}}
+function sanitizeSignatureForPreview(value:string){
+  const documentValue=new DOMParser().parseFromString(value,"text/html");
+  const clean=(node:Node):Node=>{
+    if(node.nodeType===Node.TEXT_NODE)return document.createTextNode(node.textContent??"");
+    if(!(node instanceof HTMLElement))return document.createDocumentFragment();
+    if(!signatureTags.has(node.tagName)){const fragment=document.createDocumentFragment();for(const child of [...node.childNodes])fragment.append(clean(child));return fragment}
+    const result=document.createElement(node.tagName.toLowerCase());
+    for(const attribute of [...node.attributes]){
+      const name=attribute.name.toLowerCase();if(!signatureAttributes.has(name)||name.startsWith("on"))continue;
+      if(name==="href"||name==="src"){const safe=safeSignatureUrl(attribute.value,node.tagName);if(safe)result.setAttribute(name,safe);continue}
+      if(name==="style"){const style=document.createElement("span");style.setAttribute("style",attribute.value);for(const property of [...style.style])if(signatureStyles.has(property)&&!/(?:url|expression)\s*\(/i.test(style.style.getPropertyValue(property)))result.style.setProperty(property,style.style.getPropertyValue(property));continue}
+      if(name==="target"&&attribute.value!=="_blank")continue;
+      result.setAttribute(name,attribute.value);
+    }
+    if(result.tagName==="A"&&result.getAttribute("target")==="_blank")result.setAttribute("rel","noopener noreferrer");
+    for(const child of [...node.childNodes])result.append(clean(child));
+    return result;
+  };
+  const root=document.createElement("div");for(const child of [...documentValue.body.childNodes])root.append(clean(child));return root.innerHTML;
+}
+function insertSanitizedHtml(html:string){const selection=window.getSelection();if(!selection?.rangeCount)return;const range=selection.getRangeAt(0);range.deleteContents();const fragment=range.createContextualFragment(html);const last=fragment.lastChild;range.insertNode(fragment);if(last){range.setStartAfter(last);range.collapse(true);selection.removeAllRanges();selection.addRange(range)}}

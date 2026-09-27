@@ -11,7 +11,7 @@ import {
 } from "./adapter.js";
 
 const credentialsRecord={imap_host:"imap.example.test",imap_port:"993",imap_secure:"true",smtp_host:"smtp.example.test",smtp_port:"465",smtp_secure:"1",username:"support@example.test",password:"super-secret",imap_mailbox:"INBOX"};
-const normalizedCredentials:EmailCredentials={imap_host:"imap.example.test",imap_port:993,imap_secure:true,smtp_host:"smtp.example.test",smtp_port:465,smtp_secure:true,username:"support@example.test",password:"super-secret",from_address:"support@example.test",from_name:undefined,reply_to:undefined,imap_mailbox:"INBOX"};
+const normalizedCredentials:EmailCredentials={imap_host:"imap.example.test",imap_port:993,imap_secure:true,smtp_host:"smtp.example.test",smtp_port:465,smtp_secure:true,username:"support@example.test",password:"super-secret",from_address:"support@example.test",from_name:undefined,reply_to:undefined,imap_mailbox:"INBOX",signature_enabled:false,signature_html:undefined};
 
 function rawEmail(input:{id?:string;from?:string;replyTo?:string;to?:string;subject?:string;inReplyTo?:string;references?:string;body?:string;html?:string;date?:string;attachments?:Array<{name:string;type:string;content:Buffer}>}) {
   const boundary="----hub-test-boundary";
@@ -142,9 +142,20 @@ test("SMTP selects Reply-To, fallback From, stable thread headers and reports SE
   assert.equal(replySubject("Question"),"Re: Question");assert.equal(outboundMessageId("hub-message-1"),outboundMessageId("hub-message-1"));
 });
 
+test("SMTP adds one sanitized account signature and safe attachments without mutating the reply",async()=>{
+  const {config}=testDatabase();const sends:Record<string,any>[]=[];const h=harness(new Map(),"1",()=>({send:async input=>{sends.push(input);return{messageId:"<sent@example.test>"};}}));const adapter=new EmailAdapter({timeoutMs:100,attachmentsDir:config.attachmentsDir,factory:h.factory});
+  const signature='<table style="border-collapse:collapse"><tbody><tr><td><strong>DSDST</strong><script>alert(1)</script><img src="https://cdn.example.test/logo.png" onerror="alert(1)" width="80"><a href="javascript:alert(1)" target="_blank">bad</a><a href="mailto:support@example.test" target="_blank">support</a></td></tr></tbody></table>';
+  const envelope={messageId:"signed-1",externalConversationId:"thread",body:"Merhaba\nDünya",metadata:{reply_to:"customer@example.test",subject:"Order"},attachments:[{filename:"invoice.pdf",mimeType:"application/pdf",content:Buffer.from("%PDF-test")}]};
+  const account={id:"a",externalAccountId:"support@example.test",credentials:{...credentialsRecord,signature_enabled:"true",signature_html:signature}};
+  await adapter.sendMessage(envelope,account);await adapter.sendMessage(envelope,account);
+  for(const sent of sends){assert.equal(sent.text,"Merhaba\nDünya\n\nDSDSTbadsupport");assert.match(sent.html,/Merhaba<br>Dünya<br><br>/);assert.match(sent.html,/<table/);assert.match(sent.html,/https:\/\/cdn\.example\.test\/logo\.png/);assert.doesNotMatch(sent.html,/script|onerror|javascript:/i);assert.equal((sent.html.match(/DSDST/g)??[]).length,1);assert.deepEqual(sent.attachments,[{filename:"invoice.pdf",content:Buffer.from("%PDF-test"),contentType:"application/pdf"}]);}
+  assert.equal(envelope.body,"Merhaba\nDünya");
+});
+
 test("email reply validation requires recipient and generic body limits",()=>{const {config}=testDatabase();const adapter=new EmailAdapter({timeoutMs:100,attachmentsDir:config.attachmentsDir,factory:harness(new Map()).factory});const context={id:"a",externalAccountId:"support@example.test",credentials:null,db:null as never,phase:"QUEUE" as const};
   assert.throws(()=>adapter.validateReply({messageId:"x",externalConversationId:"x",body:"ok",metadata:{}},context),error=>assertProvider(error,"EMAIL_RECIPIENT_MISSING",false));
   assert.throws(()=>adapter.validateReply({messageId:"x",externalConversationId:"x",body:" ",metadata:{reply_to:"valid@example.test"}},context),error=>assertProvider(error,"PROVIDER_VALIDATION_FAILED",false));
+  assert.doesNotThrow(()=>adapter.validateReply({messageId:"x",externalConversationId:"x",body:"",metadata:{reply_to:"valid@example.test"},attachments:[{filename:"x.pdf",mimeType:"application/pdf",content:Buffer.from("%PDF-")}]},context));
   assert.throws(()=>adapter.validateReply({messageId:"x",externalConversationId:"x",body:"x".repeat(20_001),metadata:{reply_to:"valid@example.test"}},context),error=>assertProvider(error,"PROVIDER_VALIDATION_FAILED",false));
 });
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import {randomUUID} from "node:crypto";
+import {createHash,randomUUID} from "node:crypto";
 import {afterEach,test} from "node:test";
 import type {Server} from "node:http";
 import {createApp} from "../app.js";
@@ -89,6 +89,15 @@ test("channel config mutations enforce permission and account identity",async()=
   readerState.db.close();
 });
 
+test("email signature is account-scoped, returned as non-secret config and sanitized on update",async()=>{
+  const {db,config,base}=await start(admin);const id=randomUUID();const credentials={mailbox_email:"support@example.test",imap_host:"imap.example.test",imap_port:"993",imap_secure:"true",smtp_host:"smtp.example.test",smtp_port:"465",smtp_secure:"true",username:"support@example.test",password:"app-password",from_address:"support@example.test",imap_mailbox:"INBOX"};
+  db.prepare("INSERT INTO channel_accounts(id,channel_type,name,status,encrypted_credentials,external_account_id,polling_interval_seconds) VALUES(?,'EMAIL','Support','ACTIVE',?,'support@example.test',60)").run(id,encryptSecret(credentials,config.encryptionKey));
+  const malicious='<table style="border-collapse:collapse"><tbody><tr><td><strong>DSDST</strong><img src="https://cdn.example.test/logo.png" onerror="steal()"><a href="javascript:steal()">bad</a><iframe src="https://evil.test"></iframe></td></tr></tbody></table>';
+  const update=await request(base,`/api/channels/${id}`,{method:"PUT",body:JSON.stringify({id,channel_type:"EMAIL",name:"Support",credentials:{...credentials,password:"",signature_enabled:"true",signature_html:malicious},polling_interval_seconds:60})});assert.equal(update.status,200,await update.text());
+  const response=await request(base,`/api/channels/${id}/config`);const body=await response.json()as any;assert.equal(body.non_secret_config.signature_enabled,"true");assert.match(body.non_secret_config.signature_html,/<table/);assert.match(body.non_secret_config.signature_html,/https:\/\/cdn\.example\.test\/logo\.png/);assert.doesNotMatch(body.non_secret_config.signature_html,/onerror|javascript:|iframe/i);assert.equal(body.secret_state.password,true);
+  const stored=decryptSecret<Record<string,string>>((db.prepare("SELECT encrypted_credentials FROM channel_accounts WHERE id=?").get(id)as any).encrypted_credentials,config.encryptionKey);assert.equal(stored.signature_html,body.non_secret_config.signature_html);assert.equal(stored.password,"app-password");db.close();
+});
+
 test("attachment download serves only verified files inside the attachment root",async()=>{
   const {db,config,base}=await start(admin);
   const account=db.prepare("SELECT id FROM channel_accounts LIMIT 1").get() as {id:string};
@@ -97,9 +106,9 @@ test("attachment download serves only verified files inside the attachment root"
   db.prepare("INSERT INTO conversations(id,channel_account_id,contact_id,external_conversation_id) VALUES(?,?,?,?)").run(conversationId,account.id,contactId,randomUUID());
   db.prepare("INSERT INTO messages(id,conversation_id,channel_account_id,direction,sender_type,status) VALUES(?,?,?,'INBOUND','CUSTOMER','RECEIVED')").run(messageId,conversationId,account.id);
   fs.mkdirSync(config.attachmentsDir,{recursive:true});const diskName=randomUUID();const contents=Buffer.from("safe attachment");fs.writeFileSync(path.join(config.attachmentsDir,diskName),contents);
-  db.prepare("INSERT INTO attachments(id,message_id,type,filename,mime_type,size_bytes,storage_path,sha256) VALUES(?,?, 'DOCUMENT','report.pdf','application/pdf',?,?, 'hash')").run(safeId,messageId,contents.length,diskName);
+  db.prepare("INSERT INTO attachments(id,message_id,type,filename,mime_type,size_bytes,storage_path,sha256) VALUES(?,?, 'DOCUMENT','report.pdf','application/pdf',?,?, ?)").run(safeId,messageId,contents.length,diskName,createHash("sha256").update(contents).digest("hex"));
   db.prepare("INSERT INTO attachments(id,message_id,type,filename,mime_type,size_bytes,storage_path,sha256) VALUES(?,?, 'DOCUMENT','unsafe.pdf','application/pdf',1,'../outside','hash')").run(unsafeId,messageId);
   const safe=await request(base,`/api/attachments/${safeId}/download`);assert.equal(safe.status,200);assert.equal(await safe.text(),contents.toString());assert.match(safe.headers.get("content-disposition")??"",/report.pdf/);
-  const unsafe=await request(base,`/api/attachments/${unsafeId}/download`);assert.equal(unsafe.status,400);
+  const unsafe=await request(base,`/api/attachments/${unsafeId}/download`);assert.equal(unsafe.status,409);
   db.close();
 });

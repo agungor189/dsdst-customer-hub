@@ -12,6 +12,7 @@ export const conversationQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 export const replySchema = z.object({ body: z.string().trim().min(1).max(20_000), client_message_id: z.string().uuid() });
+export const emailAttachmentReplySchema = z.object({ body: z.string().max(20_000).default(""), client_message_id: z.string().uuid() }).strict();
 const whatsappTemplateParameterSchema = z.string()
   .min(1)
   .max(1024)

@@ -1,20 +1,23 @@
 import { randomUUID } from "node:crypto";
 import express from "express";
+import multer from "multer";
 import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
-import { assignmentSchema, conversationQuerySchema, noteSchema, replySchema, statusSchema, whatsappTemplateSendSchema } from "../../shared/schemas/api.js";
+import { assignmentSchema, conversationQuerySchema, emailAttachmentReplySchema, noteSchema, replySchema, statusSchema, whatsappTemplateSendSchema } from "../../shared/schemas/api.js";
 import { requirePermission } from "../auth/middleware.js";
-import { queueReply, queueWhatsAppTemplate } from "../outbox/service.js";
+import { queueEmailReplyWithAttachments, queueReply, queueWhatsAppTemplate } from "../outbox/service.js";
 import { writeAudit } from "../audit/index.js";
 import { getPanelCustomerContext, PanelUnavailableError } from "../panel/client.js";
 import type { AdapterRegistry } from "../channels/core/registry.js";
 import { decryptSecret } from "../security/crypto.js";
 import { ProviderError } from "../channels/core/types.js";
+import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT } from "../attachments/storage.js";
 
 const json = <T>(value: string | null, fallback: T): T => { try { return JSON.parse(value || "") as T; } catch { return fallback; } };
 
 export function createConversationRouter(db: Database.Database, config: AppConfig, registry: AdapterRegistry) {
   const router=express.Router();
+  const replyUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:MAX_ATTACHMENT_BYTES,files:MAX_ATTACHMENT_COUNT,fields:4}}).array("attachments",MAX_ATTACHMENT_COUNT);
   router.get("/",(req,res)=>{
     const parsed=conversationQuerySchema.safeParse(req.query); if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
     const q=parsed.data; const where:string[]=["ct.merged_into_contact_id IS NULL"]; const params:any[]=[];
@@ -44,7 +47,17 @@ export function createConversationRouter(db: Database.Database, config: AppConfi
     db.prepare("UPDATE conversations SET unread_count=0 WHERE id=?").run(req.params.id);
     res.json({...conversation,metadata:json(conversation.metadata_json,{}),messages:messages.map(message=>({...message,metadata:json(message.metadata_json,{}),attachments:attachmentsByMessage.get(message.id)??[]})),notes,tags});
   });
-  router.post("/:id/replies",requirePermission("customer_hub:reply"),(req,res)=>{
+  router.post("/:id/replies",requirePermission("customer_hub:reply"),(req,res,next)=>{
+    if(!req.is("multipart/form-data"))return next();
+    replyUpload(req,res,error=>{
+      if(error instanceof multer.MulterError){const code=error.code==="LIMIT_FILE_SIZE"?"ATTACHMENT_TOO_LARGE":error.code==="LIMIT_FILE_COUNT"||error.code==="LIMIT_UNEXPECTED_FILE"?"TOO_MANY_ATTACHMENTS":"VALIDATION_ERROR";return res.status(400).json({error:{code}});}
+      if(error)return next(error);
+      const parsed=emailAttachmentReplySchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
+      const files=(req.files as Express.Multer.File[]|undefined)??[];
+      try{return res.status(202).json(queueEmailReplyWithAttachments(db,registry,config.attachmentsDir,String(req.params.id),parsed.data.body,parsed.data.client_message_id,files.map(file=>({filename:file.originalname,mimeType:file.mimetype,content:file.buffer})),req.panelUser!,req.ip));}
+      catch(error:any){return res.status(error.status??500).json({error:{code:error.code??"REPLY_FAILED",message:error.message}});}
+    });
+  },(req,res)=>{
     const parsed=replySchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
     try{res.status(202).json(queueReply(db,registry,String(req.params.id),parsed.data.body,parsed.data.client_message_id,req.panelUser!,req.ip));}catch(error:any){res.status(error.status??500).json({error:{code:error.code??"REPLY_FAILED",message:error.message}});}
   });

@@ -9,6 +9,7 @@ import { ingestInbound } from "../../messages/inbound.js";
 import type { ChannelAccountContext, ChannelAdapter, ChannelSyncContext, OutboundEnvelope, ReplyValidationContext, SendResult } from "../core/types.js";
 import { ProviderError } from "../core/types.js";
 import { resolveEmailThread } from "./threading.js";
+import { buildEmailBodies } from "./signature.js";
 
 const UIDVALIDITY_CURSOR = "email_imap_uidvalidity";
 const UID_CURSOR = "email_imap_last_uid";
@@ -22,6 +23,7 @@ export type EmailCredentials = {
   smtp_host: string; smtp_port: number; smtp_secure: boolean;
   username: string; password: string;
   from_address: string; from_name?: string; reply_to?: string; imap_mailbox: string;
+  signature_enabled?: boolean; signature_html?: string;
 };
 
 export type EmailImapMessage = { uid: number; source: Buffer; internalDate?: Date };
@@ -156,7 +158,7 @@ export class EmailAdapter implements ChannelAdapter {
     if(!recipient) throw new ProviderError("Email conversation has no reply recipient",false,"EMAIL_RECIPIENT_MISSING");
     if(!EMAIL_RE.test(recipient)) throw new ProviderError("Email recipient is invalid",false,"PROVIDER_VALIDATION_FAILED");
     const length=[...envelope.body.trim()].length;
-    if(length<1||length>20_000) throw new ProviderError("Email body must be between 1 and 20000 characters",false,"PROVIDER_VALIDATION_FAILED");
+    if((length<1&&!envelope.attachments?.length)||length>20_000) throw new ProviderError("Email body or at least one attachment is required; body may not exceed 20000 characters",false,"PROVIDER_VALIDATION_FAILED");
   }
 
   async syncMessages(context:ChannelSyncContext):Promise<void> {
@@ -192,10 +194,12 @@ export class EmailAdapter implements ChannelAdapter {
     const references=headerIds(Array.isArray(envelope.metadata.references)?envelope.metadata.references.map(String):String(envelope.metadata.references??""));
     for(const id of [root,latest]) if(id&&!references.includes(id)) references.push(id);
     const messageId=outboundMessageId(envelope.messageId);
+    const bodies=buildEmailBodies(envelope.body,Boolean(credentials.signature_enabled),credentials.signature_html);
     try {
       const result=await this.factory.smtp(credentials).send({
         from:credentials.from_name?{name:credentials.from_name,address:credentials.from_address}:credentials.from_address,
-        to,replyTo:credentials.reply_to,subject:replySubject(String(envelope.metadata.subject??"")),text:envelope.body,
+        to,replyTo:credentials.reply_to,subject:replySubject(String(envelope.metadata.subject??"")),text:bodies.text,html:bodies.html,
+        attachments:(envelope.attachments??[]).map(attachment=>({filename:attachment.filename,content:attachment.content,contentType:attachment.mimeType})),
         messageId,inReplyTo:latest,references,
       });
       return {externalMessageId:normalizeMessageId(result.messageId)??messageId,status:"SENT"};
@@ -246,7 +250,7 @@ export class EmailAdapter implements ChannelAdapter {
   private credentials(value:Record<string,string>|null,externalAccountId?:string):EmailCredentials {
     const validation=this.validateConfiguration(value,externalAccountId);
     if(!validation.valid||!value) throw new ProviderError("Email account is not configured",false,"PROVIDER_CONFIGURATION_INVALID");
-    return {imap_host:value.imap_host.trim(),imap_port:portCredential(value.imap_port)!,imap_secure:booleanCredential(value.imap_secure)!,smtp_host:value.smtp_host.trim(),smtp_port:portCredential(value.smtp_port)!,smtp_secure:booleanCredential(value.smtp_secure)!,username:value.username.trim(),password:value.password,from_address:(value.from_address||value.username).trim().toLowerCase(),from_name:value.from_name?.trim()||undefined,reply_to:value.reply_to?.trim().toLowerCase()||undefined,imap_mailbox:value.imap_mailbox?.trim()||"INBOX"};
+    return {imap_host:value.imap_host.trim(),imap_port:portCredential(value.imap_port)!,imap_secure:booleanCredential(value.imap_secure)!,smtp_host:value.smtp_host.trim(),smtp_port:portCredential(value.smtp_port)!,smtp_secure:booleanCredential(value.smtp_secure)!,username:value.username.trim(),password:value.password,from_address:(value.from_address||value.username).trim().toLowerCase(),from_name:value.from_name?.trim()||undefined,reply_to:value.reply_to?.trim().toLowerCase()||undefined,imap_mailbox:value.imap_mailbox?.trim()||"INBOX",signature_enabled:value.signature_enabled==="true",signature_html:value.signature_html||undefined};
   }
   private cursor(context:ChannelSyncContext,type:string) { return (context.db.prepare("SELECT cursor_value FROM sync_cursors WHERE channel_account_id=? AND cursor_type=?").get(context.id,type) as {cursor_value:string}|undefined)?.cursor_value; }
   private storeCursors(context:ChannelSyncContext,uidValidity:string,lastUid:number) {

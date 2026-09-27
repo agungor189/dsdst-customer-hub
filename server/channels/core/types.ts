@@ -6,7 +6,8 @@ export type NormalizedInboundMessage = {
   externalUserId: string; displayName: string; username?: string; body: string; subject?: string;
   email?: string; phone?: string; messageType: string; externalCreatedAt: string; metadata: Record<string, unknown>;
 };
-export type OutboundEnvelope = { messageId: string; externalConversationId: string; body: string; metadata: Record<string, unknown> };
+export type OutboundAttachment = { filename:string; mimeType:string; content:Buffer };
+export type OutboundEnvelope = { messageId: string; externalConversationId: string; body: string; metadata: Record<string, unknown>; attachments?:OutboundAttachment[] };
 export type SendResult = { externalMessageId: string; status: "SENT" | "DELIVERED" };
 export type ChannelAccountContext = {
   id: string;
