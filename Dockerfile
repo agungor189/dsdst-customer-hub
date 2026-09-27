@@ -16,7 +16,10 @@ FROM node:22-bookworm-slim AS production
 ENV NODE_ENV=production PORT=3100 DATABASE_PATH=/data/customer-hub.db ATTACHMENTS_DIR=/data/attachments
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts=false && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts=false \
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
 COPY scripts/healthcheck.sh /usr/local/bin/customer-hub-healthcheck
