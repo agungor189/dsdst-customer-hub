@@ -9,6 +9,7 @@ COPY tsconfig.json tsconfig.server.json vite.config.ts index.html ./
 COPY src ./src
 COPY server ./server
 COPY shared ./shared
+COPY widget ./widget
 RUN npm run typecheck && npm test && npm run build
 
 FROM node:22-bookworm-slim AS production
