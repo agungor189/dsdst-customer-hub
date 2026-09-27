@@ -34,8 +34,8 @@ export function ingestInbound(db: Database.Database, channelType: ChannelType, i
         .run(conversation.id,account.id,identity.contact_id,input.externalConversationId,input.subject??null,input.externalCreatedAt,JSON.stringify(input.metadata));
     }
     const messageId = randomUUID();
-    db.prepare("INSERT INTO messages(id,conversation_id,channel_account_id,external_message_id,direction,sender_type,body_text,message_type,status,external_created_at,received_at) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)")
-      .run(messageId,conversation.id,account.id,input.externalMessageId,"INBOUND","CUSTOMER",input.body,input.messageType,"RECEIVED",input.externalCreatedAt);
+    db.prepare("INSERT INTO messages(id,conversation_id,channel_account_id,external_message_id,direction,sender_type,body_text,message_type,status,external_created_at,received_at,metadata_json) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,?)")
+      .run(messageId,conversation.id,account.id,input.externalMessageId,"INBOUND","CUSTOMER",input.body,input.messageType,"RECEIVED",input.externalCreatedAt,JSON.stringify(input.metadata));
     db.prepare("UPDATE conversations SET status=CASE WHEN status IN ('CLOSED','RESOLVED') THEN 'OPEN' ELSE status END,last_message_at=?,unread_count=unread_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=?")
       .run(input.externalCreatedAt,conversation.id);
     db.prepare("UPDATE webhook_events SET processed_at=CURRENT_TIMESTAMP WHERE provider=? AND external_event_id=?").run(channelType,input.eventId);

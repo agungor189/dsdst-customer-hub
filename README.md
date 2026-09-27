@@ -24,7 +24,7 @@ Browser ── same-origin cookie ──> Customer Hub (Express + React)
 - `src/features`: inbox, conversations, contacts ve auth arayüzleri.
 - `shared`: istemci/sunucu ortak domain tipleri ve Zod şemaları.
 
-Provider foundation adapter'ları gerçek credential olmadan `NOT_CONFIGURED` kalır; sahte başarı dönmez. Mock adapter yalnız `NODE_ENV!=production` ve `MOCK_ADAPTERS_ENABLED=true` olduğunda açılır.
+Provider foundation adapter'ları gerçek credential olmadan `NOT_CONFIGURED` kalır; sahte başarı dönmez. WhatsApp Cloud API gerçek bir webhook/outbound adapter kullanır. Mock adapter yalnız `NODE_ENV!=production` ve `MOCK_ADAPTERS_ENABLED=true` olduğunda açılır.
 
 ## Lokal geliştirme
 
@@ -76,6 +76,8 @@ Panel yalnız `internal` ağdan `http://panel:3000` ile erişilir; Hub reverse p
 ## Webhook kurulumu
 
 Meta callback: `https://<hub-host>/api/webhooks/meta`. GET challenge `META_WEBHOOK_VERIFY_TOKEN`; POST body `META_APP_SECRET` ile HMAC-SHA256 doğrulanır. Event önce `webhook_events` içine unique provider/event id ile yazılır, ardından external account/conversation/message ID kapsamlarında upsert edilir. İmzasız payload işlenmez.
+
+WhatsApp kanal hesabı credential şeması `access_token`, `phone_number_id`, opsiyonel `business_account_id` ve `vXX.X` biçiminde `graph_api_version` alanlarından oluşur. `channel_accounts.external_account_id`, aynı `phone_number_id` değerini taşımalıdır. Serbest metin yanıtı yalnız son inbound WhatsApp mesajından sonraki 24 saat içinde kuyruğa alınır; worker göndermeden hemen önce pencereyi yeniden kontrol eder. Template gönderimi ve inbound medya binary indirme bu sürümün kapsamında değildir.
 
 Development mock inbound, yalnız mock modu açıkken ve `manage_channels` izniyle `POST /api/dev/mock/inbound` üzerinden gönderilebilir. Bu endpoint production'da 404'tür.
 

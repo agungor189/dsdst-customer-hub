@@ -6,7 +6,7 @@
 |---|:---:|:---:|:---:|:---:|:---:|---|
 | Instagram | ✓ | ✓ | ✓ | ✓ | — | Meta foundation; credential zorunlu |
 | Facebook Messenger | ✓ | ✓ | ✓ | ✓ | — | Meta foundation; credential zorunlu |
-| WhatsApp Business | ✓ | ✓ | ✓ | ✓ | — | 24 saat/template kısıtı adapter validation katmanında uygulanır |
+| WhatsApp Business | ✓ | ✓ | ✓ | ✓ | — | Cloud API; 24 saatlik serbest yanıt penceresi queue ve send aşamasında uygulanır |
 | Email | ✓ | ✓ | ✓ | — | ✓ | IMAP/SMTP provider interface |
 | Website | ✓ | ✓ | ✓ | ✓ | — | İmzalı webhook ve yapılandırılmış send endpoint |
 | Trendyol | ✓ | ✓ | — | — | ✓ | `PRODUCT_QUESTION`, klasik DM değil |

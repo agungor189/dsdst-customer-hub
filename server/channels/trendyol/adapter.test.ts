@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { testDatabase } from "../../test-utils.js";
 import { queueReply } from "../../outbox/service.js";
 import { ProviderError } from "../core/types.js";
+import { createAdapterRegistry } from "../core/registry.js";
 import { normalizeTrendyolQuestion, TrendyolAdapter, validateTrendyolAnswerText, type TrendyolQuestion } from "./adapter.js";
 
 const credentials = {seller_id:"12345",api_key:"api-key",api_secret:"api-secret",environment:"stage"};
@@ -89,7 +90,7 @@ test("ANSWERED provider response is synchronized once and deduplicates an outbox
 });
 
 test("provider answer polling links a matching queued Hub reply instead of creating a duplicate",async()=>{
-  const {db}=testDatabase();
+  const {db,config}=testDatabase();
   const account=db.prepare("SELECT id,external_account_id FROM channel_accounts WHERE channel_type='TRENDYOL'").get() as {id:string;external_account_id:string};
   const body="Evet, ürün stoklarımızda bulunmaktadır.";
   let answered=false;
@@ -100,7 +101,7 @@ test("provider answer polling links a matching queued Hub reply instead of creat
   const context={db,id:account.id,externalAccountId:account.external_account_id,credentials};
   await adapter.syncMessages(context);
   const conversation=(db.prepare("SELECT id FROM conversations WHERE channel_account_id=? AND external_conversation_id='602'").get(account.id) as {id:string}).id;
-  const queued=queueReply(db,conversation,body,"26881391-16c8-4418-a21d-8a47ac8f615b",{id:"agent",username:"Agent",role:"admin",permissions:{}});
+  const queued=queueReply(db,createAdapterRegistry(config),conversation,body,"26881391-16c8-4418-a21d-8a47ac8f615b",{id:"agent",username:"Agent",role:"admin",permissions:{}});
   answered=true;
   await adapter.syncMessages(context);
   const messages=db.prepare("SELECT id,external_message_id,status FROM messages WHERE conversation_id=? AND direction='OUTBOUND'").all(conversation) as any[];

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Capability } from "../../../shared/contracts/domain.js";
 import { ingestInbound } from "../../messages/inbound.js";
-import type { ChannelAccountContext, ChannelAdapter, ChannelSyncContext, NormalizedInboundMessage, OutboundEnvelope, SendResult } from "../core/types.js";
+import type { ChannelAccountContext, ChannelAdapter, ChannelSyncContext, NormalizedInboundMessage, OutboundEnvelope, ReplyValidationContext, SendResult } from "../core/types.js";
 import { ProviderError } from "../core/types.js";
 
 const PRODUCTION_BASE_URL = "https://apigw.trendyol.com";
@@ -176,6 +176,10 @@ export class TrendyolAdapter implements ChannelAdapter {
       errors.push("environment must be production or stage");
     }
     return { valid: errors.length === 0, errors };
+  }
+
+  validateReply(envelope: OutboundEnvelope, _context: ReplyValidationContext): void {
+    validateTrendyolAnswerText(envelope.body);
   }
 
   async syncMessages(context: ChannelSyncContext): Promise<void> {

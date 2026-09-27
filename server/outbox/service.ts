@@ -1,18 +1,27 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
-import type { PanelUser } from "../../shared/contracts/domain.js";
+import type { ChannelType, PanelUser } from "../../shared/contracts/domain.js";
 import { writeAudit } from "../audit/index.js";
-import { validateTrendyolAnswerText } from "../channels/trendyol/adapter.js";
+import type { AdapterRegistry } from "../channels/core/registry.js";
+import { ProviderError } from "../channels/core/types.js";
 
-export function queueReply(db: Database.Database, conversationId: string, body: string, clientMessageId: string, actor: PanelUser, ip?: string) {
+export function queueReply(db: Database.Database, registry: AdapterRegistry, conversationId: string, body: string, clientMessageId: string, actor: PanelUser, ip?: string) {
   return db.transaction(() => {
     const existing = db.prepare("SELECT id,status FROM messages WHERE client_message_id=?").get(clientMessageId) as any;
     if (existing) return { id: existing.id, status: existing.status, duplicate: true };
-    const conversation = db.prepare("SELECT c.channel_account_id,a.channel_type FROM conversations c JOIN channel_accounts a ON a.id=c.channel_account_id WHERE c.id=?").get(conversationId) as {channel_account_id:string;channel_type:string}|undefined;
+    const conversation = db.prepare("SELECT c.channel_account_id,c.external_conversation_id,c.metadata_json,a.external_account_id,a.channel_type FROM conversations c JOIN channel_accounts a ON a.id=c.channel_account_id WHERE c.id=?").get(conversationId) as {channel_account_id:string;external_conversation_id:string;metadata_json:string;external_account_id:string;channel_type:string}|undefined;
     if (!conversation) throw Object.assign(new Error("Conversation not found"), {status:404});
-    if (conversation.channel_type === "TRENDYOL") {
-      try { validateTrendyolAnswerText(body); }
-      catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Invalid Trendyol answer"), {status:400}); }
+    const adapter = registry.get(conversation.channel_type as ChannelType);
+    if (adapter.validateReply) {
+      try {
+        adapter.validateReply(
+          {messageId:"",externalConversationId:conversation.external_conversation_id,body,metadata:JSON.parse(conversation.metadata_json || "{}")},
+          {db,phase:"QUEUE",id:conversation.channel_account_id,externalAccountId:conversation.external_account_id,credentials:null},
+        );
+      } catch (error) {
+        if (error instanceof ProviderError) throw Object.assign(error,{status:400});
+        throw error;
+      }
     }
     const messageId=randomUUID(); const jobId=randomUUID();
     db.prepare("INSERT INTO messages(id,conversation_id,channel_account_id,client_message_id,direction,sender_type,sender_external_id,body_text,status) VALUES(?,?,?,?,?,?,?,?,?)")

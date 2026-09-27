@@ -7,10 +7,11 @@ import { requirePermission } from "../auth/middleware.js";
 import { queueReply } from "../outbox/service.js";
 import { writeAudit } from "../audit/index.js";
 import { getPanelCustomerContext, PanelUnavailableError } from "../panel/client.js";
+import type { AdapterRegistry } from "../channels/core/registry.js";
 
 const json = <T>(value: string | null, fallback: T): T => { try { return JSON.parse(value || "") as T; } catch { return fallback; } };
 
-export function createConversationRouter(db: Database.Database, config: AppConfig) {
+export function createConversationRouter(db: Database.Database, config: AppConfig, registry: AdapterRegistry) {
   const router=express.Router();
   router.get("/",(req,res)=>{
     const parsed=conversationQuerySchema.safeParse(req.query); if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
@@ -39,7 +40,7 @@ export function createConversationRouter(db: Database.Database, config: AppConfi
   });
   router.post("/:id/replies",requirePermission("customer_hub:reply"),(req,res)=>{
     const parsed=replySchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
-    try{res.status(202).json(queueReply(db,String(req.params.id),parsed.data.body,parsed.data.client_message_id,req.panelUser!,req.ip));}catch(error:any){res.status(error.status??500).json({error:{code:"REPLY_FAILED",message:error.message}});}
+    try{res.status(202).json(queueReply(db,registry,String(req.params.id),parsed.data.body,parsed.data.client_message_id,req.panelUser!,req.ip));}catch(error:any){res.status(error.status??500).json({error:{code:error.code??"REPLY_FAILED",message:error.message}});}
   });
   router.post("/:id/notes",requirePermission("customer_hub:view"),(req,res)=>{
     const parsed=noteSchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR"}});

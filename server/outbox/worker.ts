@@ -19,10 +19,10 @@ export class OutboxWorker {
       let credentials:Record<string,string>|null=null;
       try {
         credentials=job.encrypted_credentials ? decryptSecret<Record<string,string>>(job.encrypted_credentials,this.config.encryptionKey) : null;
-        const result=await adapter.sendMessage(
-          {messageId:job.message_id,externalConversationId:job.external_conversation_id,body:job.body_text,metadata:{...JSON.parse(job.conversation_metadata_json||"{}"),...JSON.parse(job.metadata_json||"{}")}},
-          {id:job.channel_account_id,externalAccountId:job.external_account_id,credentials},
-        );
+        const envelope={messageId:job.message_id,externalConversationId:job.external_conversation_id,body:job.body_text,metadata:{...JSON.parse(job.conversation_metadata_json||"{}"),...JSON.parse(job.metadata_json||"{}")}};
+        const account={id:job.channel_account_id,externalAccountId:job.external_account_id,credentials};
+        adapter.validateReply?.(envelope,{...account,db:this.db,phase:"SEND"});
+        const result=await adapter.sendMessage(envelope,account);
         this.db.transaction(()=>{
           this.db.prepare("UPDATE messages SET status=?,external_message_id=?,sent_at=CURRENT_TIMESTAMP WHERE id=? AND status='SENDING'").run(result.status,result.externalMessageId,job.message_id);
           this.db.prepare("UPDATE outbox_jobs SET status='COMPLETED',locked_at=NULL,locked_by=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND locked_by=?").run(job.id,this.workerId);
