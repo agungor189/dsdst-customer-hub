@@ -2,13 +2,18 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { PanelUser } from "../../shared/contracts/domain.js";
 import { writeAudit } from "../audit/index.js";
+import { validateTrendyolAnswerText } from "../channels/trendyol/adapter.js";
 
 export function queueReply(db: Database.Database, conversationId: string, body: string, clientMessageId: string, actor: PanelUser, ip?: string) {
   return db.transaction(() => {
     const existing = db.prepare("SELECT id,status FROM messages WHERE client_message_id=?").get(clientMessageId) as any;
     if (existing) return { id: existing.id, status: existing.status, duplicate: true };
-    const conversation = db.prepare("SELECT channel_account_id FROM conversations WHERE id=?").get(conversationId) as {channel_account_id:string}|undefined;
+    const conversation = db.prepare("SELECT c.channel_account_id,a.channel_type FROM conversations c JOIN channel_accounts a ON a.id=c.channel_account_id WHERE c.id=?").get(conversationId) as {channel_account_id:string;channel_type:string}|undefined;
     if (!conversation) throw Object.assign(new Error("Conversation not found"), {status:404});
+    if (conversation.channel_type === "TRENDYOL") {
+      try { validateTrendyolAnswerText(body); }
+      catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Invalid Trendyol answer"), {status:400}); }
+    }
     const messageId=randomUUID(); const jobId=randomUUID();
     db.prepare("INSERT INTO messages(id,conversation_id,channel_account_id,client_message_id,direction,sender_type,sender_external_id,body_text,status) VALUES(?,?,?,?,?,?,?,?,?)")
       .run(messageId,conversationId,conversation.channel_account_id,clientMessageId,"OUTBOUND","AGENT",actor.id,body,"QUEUED");

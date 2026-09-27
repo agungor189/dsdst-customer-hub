@@ -1,5 +1,5 @@
 import type { Capability, ChannelType } from "../../../shared/contracts/domain.js";
-import type { ChannelAdapter, OutboundEnvelope, SendResult } from "./types.js";
+import type { ChannelAccountContext, ChannelAdapter, OutboundEnvelope, SendResult } from "./types.js";
 import { ProviderError } from "./types.js";
 
 export class FoundationAdapter implements ChannelAdapter {
@@ -8,8 +8,8 @@ export class FoundationAdapter implements ChannelAdapter {
     const errors = this.required.filter(key => !credentials?.[key]).map(key => `${key} is required`);
     return { valid: errors.length === 0, errors };
   }
-  async sendMessage(_envelope: OutboundEnvelope, credentials: Record<string,string> | null): Promise<SendResult> {
-    const validation = this.validateConfiguration(credentials);
+  async sendMessage(_envelope: OutboundEnvelope, account: ChannelAccountContext): Promise<SendResult> {
+    const validation = this.validateConfiguration(account.credentials);
     if (!this.capabilities.has("SEND_MESSAGES")) throw new ProviderError(`${this.channelType} direct reply desteklemiyor`, false, "CAPABILITY_UNSUPPORTED");
     if (!validation.valid) throw new ProviderError(`${this.channelType} yapılandırılmamış`, false, "NOT_CONFIGURED");
     throw new ProviderError(`${this.channelType} provider implementation henüz yapılandırılmadı`, false, "NOT_CONFIGURED");

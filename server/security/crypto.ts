@@ -24,3 +24,11 @@ export function redact(value: unknown): unknown {
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, sensitiveKey.test(key) ? "[REDACTED]" : redact(child)]));
   return value;
 }
+
+export function redactCredentialValues(message: string, credentials: Record<string, string> | null): string {
+  let safe = message;
+  for (const value of Object.values(credentials ?? {})) {
+    if (value) safe = safe.split(value).join("[REDACTED]");
+  }
+  return safe;
+}
