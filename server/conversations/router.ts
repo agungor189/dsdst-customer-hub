@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import express from "express";
 import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
-import { assignmentSchema, conversationQuerySchema, noteSchema, replySchema, statusSchema } from "../../shared/schemas/api.js";
+import { assignmentSchema, conversationQuerySchema, noteSchema, replySchema, statusSchema, whatsappTemplateSendSchema } from "../../shared/schemas/api.js";
 import { requirePermission } from "../auth/middleware.js";
-import { queueReply } from "../outbox/service.js";
+import { queueReply, queueWhatsAppTemplate } from "../outbox/service.js";
 import { writeAudit } from "../audit/index.js";
 import { getPanelCustomerContext, PanelUnavailableError } from "../panel/client.js";
 import type { AdapterRegistry } from "../channels/core/registry.js";
+import { decryptSecret } from "../security/crypto.js";
+import { ProviderError } from "../channels/core/types.js";
 
 const json = <T>(value: string | null, fallback: T): T => { try { return JSON.parse(value || "") as T; } catch { return fallback; } };
 
@@ -41,6 +43,34 @@ export function createConversationRouter(db: Database.Database, config: AppConfi
   router.post("/:id/replies",requirePermission("customer_hub:reply"),(req,res)=>{
     const parsed=replySchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
     try{res.status(202).json(queueReply(db,registry,String(req.params.id),parsed.data.body,parsed.data.client_message_id,req.panelUser!,req.ip));}catch(error:any){res.status(error.status??500).json({error:{code:error.code??"REPLY_FAILED",message:error.message}});}
+  });
+  router.post("/:id/whatsapp-template",requirePermission("customer_hub:reply"),async(req,res)=>{
+    const parsed=whatsappTemplateSendSchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
+    const conversation=db.prepare(`SELECT c.id,c.channel_account_id,a.channel_type,a.external_account_id,a.encrypted_credentials
+      FROM conversations c JOIN channel_accounts a ON a.id=c.channel_account_id WHERE c.id=?`).get(req.params.id) as any;
+    if(!conversation)return res.status(404).json({error:{code:"NOT_FOUND"}});
+    if(conversation.channel_type!=="META_WHATSAPP")return res.status(400).json({error:{code:"CHANNEL_NOT_SUPPORTED",message:"Conversation is not WhatsApp"}});
+    const adapter=registry.get("META_WHATSAPP");
+    if(!adapter.validateWhatsAppTemplate)return res.status(501).json({error:{code:"NOT_SUPPORTED"}});
+    try{
+      const existing=db.prepare("SELECT id,status,conversation_id FROM messages WHERE client_message_id=?").get(parsed.data.client_message_id) as any;
+      if(existing){
+        if(existing.conversation_id!==conversation.id)return res.status(409).json({error:{code:"IDEMPOTENCY_CONFLICT"}});
+        return res.status(202).json({id:existing.id,status:existing.status,duplicate:true});
+      }
+      const credentials=conversation.encrypted_credentials?decryptSecret<Record<string,string>>(conversation.encrypted_credentials,config.encryptionKey):null;
+      await adapter.validateWhatsAppTemplate(
+        {id:conversation.channel_account_id,externalAccountId:conversation.external_account_id,credentials},
+        parsed.data.template_name,parsed.data.language_code,{body:parsed.data.body_parameters,header:parsed.data.header_parameters},
+      );
+      res.status(202).json(queueWhatsAppTemplate(db,registry,conversation.id,{
+        templateName:parsed.data.template_name,languageCode:parsed.data.language_code,bodyParameters:parsed.data.body_parameters,
+        headerParameters:parsed.data.header_parameters,clientMessageId:parsed.data.client_message_id,
+      },req.panelUser!,req.ip));
+    }catch(error:any){
+      if(error instanceof ProviderError)return res.status(error.code.startsWith("WHATSAPP_TEMPLATE")||error.code==="WHATSAPP_WABA_REQUIRED"||error.code==="PROVIDER_VALIDATION_FAILED"?400:502).json({error:{code:error.code,message:error.message,retryable:error.retryable}});
+      res.status(error.status??500).json({error:{code:error.code??"REPLY_FAILED",message:error.message}});
+    }
   });
   router.post("/:id/notes",requirePermission("customer_hub:view"),(req,res)=>{
     const parsed=noteSchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR"}});

@@ -12,6 +12,20 @@ export const conversationQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 export const replySchema = z.object({ body: z.string().trim().min(1).max(20_000), client_message_id: z.string().uuid() });
+const whatsappTemplateParameterSchema = z.string()
+  .min(1)
+  .max(1024)
+  .refine(value => !/[\u0000-\u001F\u007F]/.test(value), "control characters are not allowed");
+export const whatsappTemplateSendSchema = z.object({
+  template_name: z.string().regex(/^[a-z][a-z0-9_]{0,511}$/),
+  language_code: z.string().regex(/^[a-z]{2,3}(?:_[A-Z]{2})?$/),
+  body_parameters: z.array(whatsappTemplateParameterSchema).max(20).default([]),
+  header_parameters: z.array(whatsappTemplateParameterSchema).max(1).default([]),
+  client_message_id: z.string().uuid(),
+}).strict();
+export const whatsappTemplateListQuerySchema = z.object({
+  status: z.enum(["APPROVED", "PENDING", "REJECTED"]).optional(),
+});
 export const noteSchema = z.object({ text: z.string().trim().min(1).max(10_000) });
 export const assignmentSchema = z.object({ assigned_user_id: z.string().min(1).max(100).nullable() });
 export const statusSchema = z.object({ status: z.enum(conversationStatuses) });

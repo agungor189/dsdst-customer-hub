@@ -78,7 +78,16 @@ Panel yalnız `internal` ağdan `http://panel:3000` ile erişilir; Hub reverse p
 
 Meta callback: `https://<hub-host>/api/webhooks/meta`. Instagram, Facebook Messenger ve WhatsApp aynı callback'i kullanır. GET challenge `META_WEBHOOK_VERIFY_TOKEN`; POST body `META_APP_SECRET` ile `X-Hub-Signature-256` HMAC-SHA256 doğrulanır. Event önce `webhook_events` içine unique provider/event id ile yazılır, ardından external account/conversation/message ID kapsamlarında upsert edilir. İmzasız payload işlenmez. App secret, verify token ve provider access token değerleri webhook metadata'sına, audit'e veya hata kaydına yazılmaz.
 
-WhatsApp kanal hesabı credential şeması `access_token`, `phone_number_id`, opsiyonel `business_account_id` ve `vXX.X` biçiminde `graph_api_version` alanlarından oluşur. `channel_accounts.external_account_id`, aynı `phone_number_id` değerini taşımalıdır. Serbest metin yanıtı yalnız son inbound WhatsApp mesajından sonraki 24 saat içinde kuyruğa alınır; worker göndermeden hemen önce pencereyi yeniden kontrol eder. Template gönderimi ve inbound medya binary indirme bu sürümün kapsamında değildir.
+### WhatsApp Cloud API
+
+WhatsApp kanal hesabı credential şeması `access_token`, `phone_number_id`, opsiyonel `business_account_id` ve `vXX.X` biçiminde `graph_api_version` alanlarından oluşur. `channel_accounts.external_account_id`, aynı `phone_number_id` değerini taşımalıdır. Serbest metin yanıtı yalnız son inbound WhatsApp mesajından sonraki 24 saat içinde kuyruğa alınır; worker göndermeden hemen önce pencereyi yeniden kontrol eder. Pencere kapalıysa normal yanıt `WHATSAPP_TEMPLATE_REQUIRED` ile reddedilir.
+
+Önceden onaylanmış template mesajları 24 saatlik pencerenin dışında da gönderilebilir. Template listeleme için `business_account_id` zorunludur; eksikliğinde `WHATSAPP_WABA_REQUIRED` döner. Her iki endpoint `customer_hub:reply` izni ister:
+
+- `GET /api/channels/:channelAccountId/whatsapp/templates` — ilgili WABA'nın template'lerini listeler; `?status=APPROVED` filtresi kullanılabilir.
+- `POST /api/conversations/:conversationId/whatsapp-template` — onaylı bir template'i mevcut messages/outbox/worker hattına kuyruğa alır.
+
+Gönderim şu aşamada BODY text parametrelerini ve isteğe bağlı tek HEADER text parametresini destekler. Media header, dinamik URL/Flow button, catalog, location ve diğer kompleks component tipleri `WHATSAPP_TEMPLATE_COMPONENT_UNSUPPORTED` ile reddedilir. Template adı/dili, parametre sayısı ve `APPROVED` durumu hesap-kapsamlı, beş dakikalık metadata cache'i üzerinden doğrulanır; credential cache'lenmez. Template oluşturma, düzenleme, silme ve approval submission Customer Hub'ın dışında, Meta WhatsApp Manager üzerinden yapılır. Inbound medya binary indirme bu sürümün kapsamında değildir.
 
 ### Facebook Messenger
 

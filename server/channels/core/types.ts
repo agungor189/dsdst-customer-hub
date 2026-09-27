@@ -31,6 +31,18 @@ export type NormalizedWebhookBatch = {
   statuses: NormalizedMessageStatus[];
 };
 
+export type WhatsAppTemplateComponent = Record<string, unknown> & { type: string };
+export type WhatsAppTemplate = {
+  id: string;
+  name: string;
+  language: string;
+  category: string;
+  status: string;
+  quality_score?: unknown;
+  components: WhatsAppTemplateComponent[];
+};
+export type WhatsAppTemplateParameters = { body: string[]; header: string[] };
+
 export interface ChannelAdapter {
   readonly channelType: ChannelType;
   readonly capabilities: ReadonlySet<Capability>;
@@ -41,6 +53,8 @@ export interface ChannelAdapter {
   syncConversations?(context: ChannelSyncContext): Promise<void>;
   syncMessages?(context: ChannelSyncContext): Promise<void>;
   markRead?(externalMessageId: string, account: ChannelAccountContext): Promise<void>;
+  listWhatsAppTemplates?(account: ChannelAccountContext): Promise<WhatsAppTemplate[]>;
+  validateWhatsAppTemplate?(account: ChannelAccountContext, name: string, language: string, parameters: WhatsAppTemplateParameters): Promise<WhatsAppTemplate>;
 }
 
 export class ProviderError extends Error {

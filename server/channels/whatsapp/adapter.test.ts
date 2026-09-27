@@ -8,11 +8,12 @@ import type { AdapterRegistry } from "../core/registry.js";
 import { WhatsAppCloudAdapter, normalizeWhatsAppWebhook } from "./adapter.js";
 import { ingestInbound } from "../../messages/inbound.js";
 import { applyMessageStatus } from "../../messages/status.js";
-import { queueReply } from "../../outbox/service.js";
+import { queueReply, queueWhatsAppTemplate } from "../../outbox/service.js";
 import { OutboxWorker } from "../../outbox/worker.js";
 import { encryptSecret } from "../../security/crypto.js";
 import { createAdapterRegistry } from "../core/registry.js";
 import { createApp } from "../../app.js";
+import { whatsappTemplateSendSchema } from "../../../shared/schemas/api.js";
 
 const credentials = {
   access_token:"top-secret-token",
@@ -92,6 +93,142 @@ test("mark-read uses the account-scoped messages endpoint",async()=>{
   const adapter=new WhatsAppCloudAdapter({timeoutMs:100,fetch:async(_input,init)=>{body=JSON.parse(String(init?.body));return response({success:true});}});
   await adapter.markRead("wamid.in-1",account);
   assert.deepEqual(body,{messaging_product:"whatsapp",status:"read",message_id:"wamid.in-1"});
+});
+
+test("template list requires a WABA id",async()=>{
+  const adapter=new WhatsAppCloudAdapter({timeoutMs:100,fetch:async()=>response({})});
+  const {business_account_id:_businessAccountId,...credentialsWithoutWaba}=credentials;
+  await assert.rejects(()=>adapter.listWhatsAppTemplates!({...account,credentials:credentialsWithoutWaba}),expectProvider("WHATSAPP_WABA_REQUIRED",false));
+});
+
+test("template list uses WABA Bearer auth, bounded cursor pagination and safe normalization",async()=>{
+  const calls:Array<{url:string;authorization:string|null}>=[];
+  const adapter=new WhatsAppCloudAdapter({timeoutMs:100,fetch:async(input,init)=>{
+    const url=String(input);calls.push({url,authorization:new Headers(init?.headers).get("authorization")});
+    if(calls.length===1)return response({data:[{id:"1",name:"order_update",language:"tr",category:"UTILITY",status:"APPROVED",quality_score:{score:"GREEN"},components:[{type:"BODY",text:"Merhaba {{1}}"}]}],paging:{next:"provider-next-url",cursors:{after:"cursor-2"}}});
+    return response({data:[{id:"2",name:"promo",language:"tr",category:"MARKETING",status:"PENDING",components:[{type:"HEADER",format:"TEXT",text:"Duyuru"}]},{id:"3",name:"old_promo",language:"en_US",category:"MARKETING",status:"REJECTED",components:[]}],paging:{}});
+  }});
+  const templates=await adapter.listWhatsAppTemplates!(account);
+  assert.equal(calls.length,2);
+  assert.match(calls[0].url,/\/v23\.0\/business-1\/message_templates\?/);
+  assert.match(calls[0].url,/limit=100/);
+  assert.match(calls[1].url,/after=cursor-2/);
+  assert.deepEqual(calls.map(call=>call.authorization),["Bearer top-secret-token","Bearer top-secret-token"]);
+  assert.deepEqual(templates.map(item=>({name:item.name,status:item.status})),[
+    {name:"order_update",status:"APPROVED"},{name:"promo",status:"PENDING"},{name:"old_promo",status:"REJECTED"},
+  ]);
+  assert.equal(templates[0].components[0].text,"Merhaba {{1}}");
+  assert.doesNotMatch(JSON.stringify(templates),/top-secret-token/);
+});
+
+test("template send uses the phone number endpoint, recipient, language and body/header text parameters",async()=>{
+  let captured:{url:string;body:any}|undefined;
+  const adapter=new WhatsAppCloudAdapter({timeoutMs:100,fetch:async(input,init)=>{captured={url:String(input),body:JSON.parse(String(init?.body))};return response({messages:[{id:"wamid.template-1"}]});}});
+  const result=await adapter.sendMessage({...envelope,metadata:{
+    whatsapp_mode:"TEMPLATE",template_name:"order_update",language_code:"tr",
+    template_components:[
+      {type:"header",parameters:[{type:"text",text:"Sipariş"}]},
+      {type:"body",parameters:[{type:"text",text:"Alper"},{type:"text",text:"12345"}]},
+    ],
+  }},account);
+  assert.deepEqual(result,{externalMessageId:"wamid.template-1",status:"SENT"});
+  assert.equal(captured!.url,"https://graph.facebook.com/v23.0/phone-1/messages");
+  assert.deepEqual(captured!.body,{
+    messaging_product:"whatsapp",recipient_type:"individual",to:"905551112233",type:"template",
+    template:{name:"order_update",language:{code:"tr"},components:[
+      {type:"header",parameters:[{type:"text",text:"Sipariş"}]},
+      {type:"body",parameters:[{type:"text",text:"Alper"},{type:"text",text:"12345"}]},
+    ]},
+  });
+});
+
+test("template validation rejects non-approved, missing and unsupported complex templates",async()=>{
+  const adapter=new WhatsAppCloudAdapter({timeoutMs:100,fetch:async()=>response({data:[
+    {id:"1",name:"approved",language:"tr",category:"UTILITY",status:"APPROVED",components:[{type:"BODY",text:"Merhaba {{1}}"}]},
+    {id:"2",name:"pending",language:"tr",category:"UTILITY",status:"PENDING",components:[]},
+    {id:"3",name:"media",language:"tr",category:"UTILITY",status:"APPROVED",components:[{type:"HEADER",format:"IMAGE"}]},
+    {id:"4",name:"flow",language:"tr",category:"UTILITY",status:"APPROVED",components:[{type:"BUTTONS",buttons:[{type:"FLOW",text:"Aç"}]}]},
+  ]})});
+  await adapter.validateWhatsAppTemplate!(account,"approved","tr",{body:["Alper"],header:[]});
+  await assert.rejects(()=>adapter.validateWhatsAppTemplate!(account,"pending","tr",{body:[],header:[]}),expectProvider("WHATSAPP_TEMPLATE_NOT_APPROVED",false));
+  await assert.rejects(()=>adapter.validateWhatsAppTemplate!(account,"missing","tr",{body:[],header:[]}),expectProvider("WHATSAPP_TEMPLATE_NOT_FOUND",false));
+  await assert.rejects(()=>adapter.validateWhatsAppTemplate!(account,"media","tr",{body:[],header:[]}),expectProvider("WHATSAPP_TEMPLATE_COMPONENT_UNSUPPORTED",false));
+  await assert.rejects(()=>adapter.validateWhatsAppTemplate!(account,"flow","tr",{body:[],header:[]}),expectProvider("WHATSAPP_TEMPLATE_COMPONENT_UNSUPPORTED",false));
+  await assert.rejects(()=>adapter.validateWhatsAppTemplate!(account,"approved","tr",{body:[],header:[]}),expectProvider("PROVIDER_VALIDATION_FAILED",false));
+});
+
+test("template metadata cache is isolated by Hub account, phone number and WABA",async()=>{
+  const adapter=new WhatsAppCloudAdapter({timeoutMs:100,fetch:async input=>{
+    const url=String(input);
+    if(url.includes("/business-1/"))return response({data:[{id:"1",name:"account_one",language:"tr",category:"UTILITY",status:"APPROVED",components:[]}]});
+    return response({data:[{id:"2",name:"account_two",language:"tr",category:"UTILITY",status:"APPROVED",components:[]}]});
+  }});
+  await adapter.validateWhatsAppTemplate!(account,"account_one","tr",{body:[],header:[]});
+  const second={id:"account-2",externalAccountId:"phone-2",credentials:{...credentials,phone_number_id:"phone-2",business_account_id:"business-2"}};
+  await adapter.validateWhatsAppTemplate!(second,"account_two","tr",{body:[],header:[]});
+  await assert.rejects(()=>adapter.validateWhatsAppTemplate!(second,"account_one","tr",{body:[],header:[]}),expectProvider("WHATSAPP_TEMPLATE_NOT_FOUND",false));
+});
+
+test("template request schema bounds names, languages, counts, length and control characters",()=>{
+  const valid={template_name:"order_update",language_code:"tr",body_parameters:["Alper"],header_parameters:[],client_message_id:randomUUID()};
+  assert.equal(whatsappTemplateSendSchema.safeParse(valid).success,true);
+  assert.equal(whatsappTemplateSendSchema.safeParse({...valid,template_name:"Order Update"}).success,false);
+  assert.equal(whatsappTemplateSendSchema.safeParse({...valid,language_code:"turkish"}).success,false);
+  assert.equal(whatsappTemplateSendSchema.safeParse({...valid,body_parameters:Array(21).fill("x")}).success,false);
+  assert.equal(whatsappTemplateSendSchema.safeParse({...valid,body_parameters:["x".repeat(1025)]}).success,false);
+  assert.equal(whatsappTemplateSendSchema.safeParse({...valid,body_parameters:["x\nvalue"]}).success,false);
+});
+
+test("template API lists safely, allows a closed-window send through outbox, and is idempotent",async()=>{
+  const {db,config}=testDatabase();
+  const accountId=installAccount(db);
+  db.prepare("UPDATE channel_accounts SET encrypted_credentials=? WHERE id=?").run(encryptSecret(credentials,config.encryptionKey),accountId);
+  const inbound=ingestInbound(db,"META_WHATSAPP",normalizeWhatsAppWebhook(inboundPayload({timestamp:"1600000000"})).messages[0]);
+  const providerCalls:Array<{method:string;url:string;body?:any}>=[];
+  const adapter=new WhatsAppCloudAdapter({timeoutMs:100,now:()=>1_900_000_000_000,fetch:async(input,init)=>{
+    const call={method:init?.method??"GET",url:String(input),body:init?.body?JSON.parse(String(init.body)):undefined};providerCalls.push(call);
+    if(call.method==="GET")return response({data:[
+      {id:"tmpl-1",name:"order_update",language:"tr",category:"UTILITY",status:"APPROVED",components:[{type:"BODY",text:"Merhaba {{1}}, sipariş {{2}}"}]},
+      {id:"tmpl-2",name:"draft",language:"tr",category:"UTILITY",status:"PENDING",components:[]},
+    ]});
+    return response({messages:[{id:"wamid.template-api"}]});
+  }});
+  const registry=registryFor(adapter);const worker=new OutboxWorker(db,registry,config,"template-api-worker");
+  const server=createApp({db,config,registry,worker,verify:async()=>admin}).listen(0);
+  const address=server.address();if(!address||typeof address==="string")throw new Error("server");const base=`http://127.0.0.1:${address.port}`;
+  const list=await fetch(`${base}/api/channels/${accountId}/whatsapp/templates`,{headers:{cookie:"test_session=x"}});
+  assert.equal(list.status,200);const listed=await list.json() as any;
+  assert.deepEqual(listed.items.map((item:any)=>item.status),["APPROVED","PENDING"]);assert.equal(listed.approved_count,1);
+  assert.doesNotMatch(JSON.stringify(listed),/top-secret-token/);
+  const clientId=randomUUID();const requestBody={template_name:"order_update",language_code:"tr",body_parameters:["Alper","12345"],header_parameters:[],client_message_id:clientId};
+  const send=()=>fetch(`${base}/api/conversations/${inbound.conversationId}/whatsapp-template`,{method:"POST",headers:{"content-type":"application/json",cookie:"test_session=x",origin:config.appOrigin},body:JSON.stringify(requestBody)});
+  const first=await send();assert.equal(first.status,202);const queued=await first.json() as any;assert.equal(queued.duplicate,false);
+  const duplicate=await send();assert.equal(duplicate.status,202);assert.equal((await duplicate.json() as any).duplicate,true);
+  const stored=db.prepare("SELECT body_text,message_type,status,metadata_json FROM messages WHERE id=?").get(queued.id) as any;
+  assert.equal(stored.body_text,"[WhatsApp Template: order_update]");assert.equal(stored.message_type,"TEMPLATE");assert.equal(stored.status,"QUEUED");
+  assert.equal(JSON.parse(stored.metadata_json).whatsapp_mode,"TEMPLATE");
+  assert.equal((db.prepare("SELECT count(*) count FROM outbox_jobs WHERE message_id=?").get(queued.id) as any).count,1);
+  await worker.tick();
+  const sent=db.prepare("SELECT status,external_message_id FROM messages WHERE id=?").get(queued.id) as any;
+  assert.deepEqual(sent,{status:"SENT",external_message_id:"wamid.template-api"});
+  const post=providerCalls.find(call=>call.method==="POST")!;assert.equal(post.url,"https://graph.facebook.com/v23.0/phone-1/messages");
+  assert.equal(post.body.to,"905551112233");assert.equal(post.body.type,"template");
+  server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));db.close();
+});
+
+test("template outbox retries the same local message after a transient provider failure",async()=>{
+  const {db,config}=testDatabase();const accountId=installAccount(db);
+  db.prepare("UPDATE channel_accounts SET encrypted_credentials=? WHERE id=?").run(encryptSecret(credentials,config.encryptionKey),accountId);
+  const inbound=ingestInbound(db,"META_WHATSAPP",normalizeWhatsAppWebhook(inboundPayload()).messages[0]);
+  let calls=0;const adapter=new WhatsAppCloudAdapter({timeoutMs:100,fetch:async()=>{calls+=1;if(calls===1)throw new Error("offline");return response({messages:[{id:"wamid.retry"}]});}});
+  const registry=registryFor(adapter);const clientId=randomUUID();
+  const queued=queueWhatsAppTemplate(db,registry,inbound.conversationId!,{templateName:"order_update",languageCode:"tr",bodyParameters:["Alper"],headerParameters:[],clientMessageId:clientId},admin);
+  const worker=new OutboxWorker(db,registry,config,"template-retry-worker");await worker.tick();
+  assert.equal((db.prepare("SELECT status FROM messages WHERE id=?").get(queued.id) as any).status,"QUEUED");
+  db.prepare("UPDATE outbox_jobs SET next_attempt_at=CURRENT_TIMESTAMP WHERE message_id=?").run(queued.id);await worker.tick();
+  assert.deepEqual(db.prepare("SELECT id,status,external_message_id FROM messages WHERE id=?").get(queued.id),{id:queued.id,status:"SENT",external_message_id:"wamid.retry"});
+  assert.equal((db.prepare("SELECT count(*) count FROM messages WHERE client_message_id=?").get(clientId) as any).count,1);
+  db.close();
 });
 
 for (const [status,code,retryable] of [[400,"PROVIDER_VALIDATION_FAILED",false],[401,"AUTHENTICATION_FAILED",false],[403,"AUTHORIZATION_FAILED",false],[404,"RESOURCE_NOT_FOUND",false],[429,"RATE_LIMITED",true],[500,"PROVIDER_UNAVAILABLE",true]] as const) {
