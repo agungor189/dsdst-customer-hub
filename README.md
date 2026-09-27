@@ -17,14 +17,14 @@ Browser ── same-origin cookie ──> Customer Hub (Express + React)
 ```
 
 - `server/auth`: Panel login proxy, her istekte `/api/auth/me`, server-side izin kontrolü.
-- `server/channels`: capability tabanlı adapter registry; gerçek WhatsApp Cloud, Email IMAP/SMTP ve Trendyol adapter'ları ile diğer kanal temelleri.
+- `server/channels`: capability tabanlı adapter registry; gerçek Instagram Messaging, Facebook Messenger, WhatsApp Cloud, Email IMAP/SMTP ve Trendyol adapter'ları ile diğer kanal temelleri.
 - `server/messages`: inbound normalizasyonu ve webhook/external message idempotency.
 - `server/outbox`: atomik kuyruğa alma, local claim kilidi ve retry/backoff. SMTP protokolü gerçek exactly-once garantisi vermez; retry aynı deterministik Message-ID'yi kullanır.
 - `server/db`: sıralı migrations; WAL, foreign keys ve busy timeout.
 - `src/features`: inbox, conversations, contacts ve auth arayüzleri.
 - `shared`: istemci/sunucu ortak domain tipleri ve Zod şemaları.
 
-Provider foundation adapter'ları gerçek credential olmadan `NOT_CONFIGURED` kalır; sahte başarı dönmez. WhatsApp Cloud API ve Email gerçek adapter kullanır. Mock adapter yalnız `NODE_ENV!=production` ve `MOCK_ADAPTERS_ENABLED=true` olduğunda açılır.
+Provider foundation adapter'ları gerçek credential olmadan `NOT_CONFIGURED` kalır; sahte başarı dönmez. Instagram Messaging, Facebook Messenger, WhatsApp Cloud API ve Email gerçek adapter kullanır. Mock adapter yalnız `NODE_ENV!=production` ve `MOCK_ADAPTERS_ENABLED=true` olduğunda açılır.
 
 ## Lokal geliştirme
 
@@ -75,9 +75,39 @@ Panel yalnız `internal` ağdan `http://panel:3000` ile erişilir; Hub reverse p
 
 ## Webhook kurulumu
 
-Meta callback: `https://<hub-host>/api/webhooks/meta`. GET challenge `META_WEBHOOK_VERIFY_TOKEN`; POST body `META_APP_SECRET` ile HMAC-SHA256 doğrulanır. Event önce `webhook_events` içine unique provider/event id ile yazılır, ardından external account/conversation/message ID kapsamlarında upsert edilir. İmzasız payload işlenmez.
+Meta callback: `https://<hub-host>/api/webhooks/meta`. Instagram, Facebook Messenger ve WhatsApp aynı callback'i kullanır. GET challenge `META_WEBHOOK_VERIFY_TOKEN`; POST body `META_APP_SECRET` ile `X-Hub-Signature-256` HMAC-SHA256 doğrulanır. Event önce `webhook_events` içine unique provider/event id ile yazılır, ardından external account/conversation/message ID kapsamlarında upsert edilir. İmzasız payload işlenmez. App secret, verify token ve provider access token değerleri webhook metadata'sına, audit'e veya hata kaydına yazılmaz.
 
 WhatsApp kanal hesabı credential şeması `access_token`, `phone_number_id`, opsiyonel `business_account_id` ve `vXX.X` biçiminde `graph_api_version` alanlarından oluşur. `channel_accounts.external_account_id`, aynı `phone_number_id` değerini taşımalıdır. Serbest metin yanıtı yalnız son inbound WhatsApp mesajından sonraki 24 saat içinde kuyruğa alınır; worker göndermeden hemen önce pencereyi yeniden kontrol eder. Template gönderimi ve inbound medya binary indirme bu sürümün kapsamında değildir.
+
+### Facebook Messenger
+
+Facebook hesabı için bir Facebook Page, Page access token, `pages_messaging` izni ve Meta app/Page webhook kurulumu gerekir. Credential şeması:
+
+```json
+{
+  "access_token": "<page-access-token>",
+  "page_id": "<facebook-page-id>",
+  "graph_api_version": "vXX.X"
+}
+```
+
+Üç alan da zorunludur; `external_account_id`, `page_id` ile aynı olmalıdır. Metin yanıtları yapılandırılan Graph sürümünde `/{page_id}/messages` adresine Bearer auth ile gider ve provider `message_id` değeri saklanır. Standart `RESPONSE` mesajı yalnız son müşteri inbound mesajından sonraki 24 saat içinde kuyruğa alınır; worker göndermeden hemen önce aynı kontrolü tekrarlar. Sponsored messages, notification token ve Human Agent yolu bu sürümde yoktur. `mark_seen` desteklenir. Delivery event'inde provider message ID bulunduğunda `DELIVERED` uygulanır; message ID taşımayan watermark-only read event'inden sahte `READ` üretilmez.
+
+### Instagram Messaging
+
+Instagram için bir Professional Account, ilgili Instagram messaging izni, geçerli access token ve Meta webhook kurulumu gerekir. Credential şeması:
+
+```json
+{
+  "access_token": "<instagram-access-token>",
+  "ig_account_id": "<instagram-professional-account-id>",
+  "graph_api_version": "vXX.X"
+}
+```
+
+`ig_account_id` zorunlu canonical alandır; geçiş uyumluluğu için eski `account_id` alanı alias olarak kabul edilir. `external_account_id`, çözülen Instagram account ID ile aynı olmalıdır. Metin yanıtları `graph.instagram.com/{graph_api_version}/{ig_account_id}/messages` adresine gider. Yalnız daha önce bu Professional Account'a inbound mesaj göndermiş exact scoped user/conversation kimliğine yanıt verilebilir; unsolicited/promotional messaging uygulanmaz. Resmi ve kesin bir mark-read sözleşmesi kullanılmadığı için Instagram `MARK_READ` capability'si ilan etmez.
+
+Facebook ve Instagram inbound attachment binary'leri indirilmez. Mesaj, `[Görsel]`, `[Video]`, `[Ses]`, `[Belge]`, `[Sticker]` veya `[Paylaşım]` placeholder'ı ve yalnız tip/provider ID/URL/title güvenli metadata alt kümesiyle korunur. Her iki adapter'daki `CUSTOMER_PROFILE` capability'si bu sürümde webhook sender identity'sinin Hub contact/identity modeline dönüştürülmesi ve provider-specific fallback adını ifade eder; ayrı bir profile API lookup çağrısı yapılmaz.
 
 ## Email IMAP/SMTP adapter
 

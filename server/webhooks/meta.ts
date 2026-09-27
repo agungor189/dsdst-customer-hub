@@ -5,6 +5,8 @@ import type { AppConfig } from "../config.js";
 import { ingestInbound } from "../messages/inbound.js";
 import { applyMessageStatus } from "../messages/status.js";
 import type { AdapterRegistry } from "../channels/core/registry.js";
+import type { ChannelType } from "../../shared/contracts/domain.js";
+import type { NormalizedWebhookBatch } from "../channels/core/types.js";
 
 const safeEqual = (a: string, b: string) => {
   const left = Buffer.from(a); const right = Buffer.from(b);
@@ -24,34 +26,25 @@ export function createMetaWebhookRouter(db: Database.Database, config: AppConfig
     if (!safeEqual(signature, expected)) return res.status(401).json({ error: { code: "INVALID_SIGNATURE" } });
     try {
       let accepted = 0;
-      const whatsapp = registry.get("META_WHATSAPP").handleWebhook?.(req.body);
-      for (const message of whatsapp?.messages ?? []) {
-        ingestInbound(db,"META_WHATSAPP",message);
-        accepted += 1;
-      }
-      for (const status of whatsapp?.statuses ?? []) {
-        applyMessageStatus(db,"META_WHATSAPP",status);
-        accepted += 1;
-      }
-      for (const entry of req.body?.entry ?? []) {
-        for (const event of entry.messaging ?? entry.changes ?? []) {
-          const value = event.value ?? event; const message = value.message ?? value.messages?.[0];
-          if (!message) continue;
-          if (value.messaging_product === "whatsapp") continue;
-          const channel = req.body.object === "instagram" ? "META_INSTAGRAM" : "META_FACEBOOK";
-          ingestInbound(db, channel, {
-            eventId: String(message.id ?? event.id), externalAccountId: String(value.metadata?.phone_number_id ?? entry.id),
-            externalConversationId: String(value.contacts?.[0]?.wa_id ?? event.sender?.id ?? message.from), externalMessageId: String(message.id),
-            externalUserId: String(message.from ?? event.sender?.id), displayName: String(value.contacts?.[0]?.profile?.name ?? event.sender?.id ?? "Meta müşteri"),
-            body: String(message.text?.body ?? message.text ?? ""), messageType: String(message.type ?? "TEXT").toUpperCase(),
-            externalCreatedAt: new Date(Number(message.timestamp ?? Date.now() / 1000) * 1000).toISOString(), metadata: { provider: "meta" },
-          });
+      const processBatch = (channel: ChannelType, batch: NormalizedWebhookBatch | undefined) => {
+        for (const message of batch?.messages ?? []) {
+          ingestInbound(db, channel, message);
           accepted += 1;
         }
+        for (const status of batch?.statuses ?? []) {
+          applyMessageStatus(db, channel, status);
+          accepted += 1;
+        }
+      };
+      processBatch("META_WHATSAPP", registry.get("META_WHATSAPP").handleWebhook?.(req.body));
+      if (req.body?.object === "page") {
+        processBatch("META_FACEBOOK", registry.get("META_FACEBOOK").handleWebhook?.(req.body));
+      } else if (req.body?.object === "instagram") {
+        processBatch("META_INSTAGRAM", registry.get("META_INSTAGRAM").handleWebhook?.(req.body));
       }
       return res.status(200).json({ accepted });
-    } catch (error: any) {
-      return res.status(422).json({ error: { code: "WEBHOOK_PROCESSING_FAILED", message: error.message } });
+    } catch {
+      return res.status(422).json({ error: { code: "WEBHOOK_PROCESSING_FAILED" } });
     }
   });
   return router;

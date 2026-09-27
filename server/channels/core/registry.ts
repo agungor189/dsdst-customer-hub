@@ -5,13 +5,15 @@ import { DevelopmentMockAdapter, FoundationAdapter } from "./base.js";
 import { TrendyolAdapter } from "../trendyol/adapter.js";
 import { WhatsAppCloudAdapter } from "../whatsapp/adapter.js";
 import { EmailAdapter } from "../email/adapter.js";
+import { FacebookMessengerAdapter } from "../facebook/adapter.js";
+import { InstagramMessagingAdapter } from "../instagram/adapter.js";
 
 const caps = (...values: Capability[]) => new Set(values);
 
 export function createAdapterRegistry(config: AppConfig) {
   const adapters: ChannelAdapter[] = [
-    new FoundationAdapter("META_INSTAGRAM", caps("READ_MESSAGES","SEND_MESSAGES","WEBHOOK","ATTACHMENTS","MARK_READ","CUSTOMER_PROFILE"), ["access_token","account_id"]),
-    new FoundationAdapter("META_FACEBOOK", caps("READ_MESSAGES","SEND_MESSAGES","WEBHOOK","ATTACHMENTS","MARK_READ","CUSTOMER_PROFILE"), ["access_token","page_id"]),
+    new InstagramMessagingAdapter({ timeoutMs: config.outboundTimeoutMs }),
+    new FacebookMessengerAdapter({ timeoutMs: config.outboundTimeoutMs }),
     new WhatsAppCloudAdapter({ timeoutMs: config.outboundTimeoutMs }),
     new EmailAdapter({ timeoutMs: config.outboundTimeoutMs, attachmentsDir: config.attachmentsDir }),
     config.mockAdaptersEnabled ? new DevelopmentMockAdapter("WEBSITE", caps("READ_MESSAGES","SEND_MESSAGES","WEBHOOK","ATTACHMENTS")) : new FoundationAdapter("WEBSITE", caps("READ_MESSAGES","SEND_MESSAGES","WEBHOOK","ATTACHMENTS"), ["webhook_secret","send_endpoint"]),
