@@ -5,14 +5,18 @@ import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
 import { requirePermission } from "../auth/middleware.js";
 import { AttachmentError, MAX_ATTACHMENT_BYTES, normalizeAttachmentFilename, persistInboundAttachments, readStoredAttachment, validateOutboundAttachments } from "./storage.js";
+import { conversationAccountScope } from "../auth/ownership.js";
 
 export function createAttachmentRouter(db:Database.Database,config:AppConfig) {
   fs.mkdirSync(config.attachmentsDir,{recursive:true});
   const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:MAX_ATTACHMENT_BYTES,files:1}});
   const router=express.Router();
   router.get("/:id/download",requirePermission("customer_hub:view"),(req,res)=>{
+    const scope=conversationAccountScope("ca",req.panelUser!);
     const attachment=db.prepare(`SELECT a.filename,a.mime_type,a.size_bytes,a.storage_path,a.sha256 FROM attachments a
-      JOIN messages m ON m.id=a.message_id JOIN conversations c ON c.id=m.conversation_id WHERE a.id=?`).get(req.params.id) as {filename:string;mime_type:string;size_bytes:number;storage_path:string|null}|undefined;
+      JOIN messages m ON m.id=a.message_id JOIN conversations c ON c.id=m.conversation_id
+      JOIN channel_accounts ca ON ca.id=c.channel_account_id
+      WHERE a.id=? AND ${scope.sql}`).get(req.params.id,...scope.params) as {filename:string;mime_type:string;size_bytes:number;storage_path:string|null}|undefined;
     if(!attachment||!attachment.storage_path)return res.status(404).json({error:{code:"ATTACHMENT_NOT_FOUND"}});
     let content:Buffer;try{content=readStoredAttachment(config.attachmentsDir,attachment as any);}catch(error){const issue=error instanceof AttachmentError?error:null;return res.status(issue?.status??409).json({error:{code:issue?.code??"ATTACHMENT_INTEGRITY_ERROR"}});}
     res.setHeader("Content-Type",attachment.mime_type);
@@ -21,7 +25,13 @@ export function createAttachmentRouter(db:Database.Database,config:AppConfig) {
     res.setHeader("Cache-Control","private, no-store");
     res.send(content);
   });
-  router.post("/messages/:messageId",requirePermission("customer_hub:reply"),(req,res,next)=>upload.single("file")(req,res,error=>{if(error instanceof multer.MulterError)return res.status(400).json({error:{code:error.code==="LIMIT_FILE_SIZE"?"ATTACHMENT_TOO_LARGE":"VALIDATION_ERROR"}});if(error)return next(error);next();}),(req,res)=>{
+  router.post("/messages/:messageId",requirePermission("customer_hub:reply"),(req,res,next)=>{
+    const scope=conversationAccountScope("ca",req.panelUser!);
+    const visible=db.prepare(`SELECT 1 FROM messages m JOIN conversations c ON c.id=m.conversation_id
+      JOIN channel_accounts ca ON ca.id=c.channel_account_id WHERE m.id=? AND ${scope.sql}`).get(req.params.messageId,...scope.params);
+    if(!visible)return res.status(404).json({error:{code:"NOT_FOUND"}});
+    next();
+  },(req,res,next)=>upload.single("file")(req,res,error=>{if(error instanceof multer.MulterError)return res.status(400).json({error:{code:error.code==="LIMIT_FILE_SIZE"?"ATTACHMENT_TOO_LARGE":"VALIDATION_ERROR"}});if(error)return next(error);next();}),(req,res)=>{
     const messageId=String(req.params.messageId);
     if(!req.file) return res.status(415).json({error:{code:"UNSUPPORTED_MEDIA_TYPE"}});
     const message=db.prepare("SELECT m.id,m.direction,EXISTS(SELECT 1 FROM outbox_jobs j WHERE j.message_id=m.id) has_outbox FROM messages m WHERE m.id=?").get(messageId) as {id:string;direction:string;has_outbox:number}|undefined;

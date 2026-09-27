@@ -12,15 +12,21 @@ import type { AdapterRegistry } from "../channels/core/registry.js";
 import { decryptSecret } from "../security/crypto.js";
 import { ProviderError } from "../channels/core/types.js";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT } from "../attachments/storage.js";
+import { canAccessConversation, conversationAccountScope } from "../auth/ownership.js";
 
 const json = <T>(value: string | null, fallback: T): T => { try { return JSON.parse(value || "") as T; } catch { return fallback; } };
 
 export function createConversationRouter(db: Database.Database, config: AppConfig, registry: AdapterRegistry) {
   const router=express.Router();
   const replyUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:MAX_ATTACHMENT_BYTES,files:MAX_ATTACHMENT_COUNT,fields:4}}).array("attachments",MAX_ATTACHMENT_COUNT);
+  router.param("id",(req,res,next,id)=>{
+    if(!req.panelUser||!canAccessConversation(db,String(id),req.panelUser))return res.status(404).json({error:{code:"NOT_FOUND"}});
+    next();
+  });
   router.get("/",(req,res)=>{
     const parsed=conversationQuerySchema.safeParse(req.query); if(!parsed.success)return res.status(400).json({error:{code:"VALIDATION_ERROR",details:parsed.error.flatten()}});
-    const q=parsed.data; const where:string[]=["ct.merged_into_contact_id IS NULL"]; const params:any[]=[];
+    const scope=conversationAccountScope("a",req.panelUser!);
+    const q=parsed.data; const where:string[]=["ct.merged_into_contact_id IS NULL",scope.sql]; const params:any[]=[...scope.params];
     if(q.channel){where.push("a.channel_type=?");params.push(q.channel);} if(q.status){where.push("c.status=?");params.push(q.status);}
     if(q.priority){where.push("c.priority=?");params.push(q.priority);} if(q.assigned){where.push(q.assigned==="unassigned"?"c.assigned_user_id IS NULL":"c.assigned_user_id=?");if(q.assigned!=="unassigned")params.push(q.assigned);}
     if(q.unread==="true")where.push("c.unread_count>0");

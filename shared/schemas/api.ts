@@ -52,7 +52,7 @@ export const channelAccountSchema = z.object({
   external_account_id: z.string().trim().min(1).max(250),
   credentials: z.record(z.string(), z.string()).optional(),
   polling_interval_seconds: z.number().int().min(60).max(86_400).optional(),
-});
+}).strict();
 export const channelAccountUpdateSchema = z.object({
   id: z.string().uuid().optional(),
   channel_type: z.enum(channelTypes),

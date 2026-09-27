@@ -32,8 +32,9 @@ function queueOutbound(db: Database.Database, registry: AdapterRegistry, convers
       }
     }
     const messageId=randomUUID(); const jobId=randomUUID();
+    const storedMetadata={...(options.metadata??{}),_hub_agent_username:actor.username};
     db.prepare("INSERT INTO messages(id,conversation_id,channel_account_id,client_message_id,direction,sender_type,sender_external_id,body_text,message_type,status,metadata_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-      .run(messageId,conversationId,conversation.channel_account_id,clientMessageId,"OUTBOUND","AGENT",actor.id,body,options.messageType??"TEXT","QUEUED",JSON.stringify(options.metadata??{}));
+      .run(messageId,conversationId,conversation.channel_account_id,clientMessageId,"OUTBOUND","AGENT",actor.id,body,options.messageType??"TEXT","QUEUED",JSON.stringify(storedMetadata));
     if(options.attachments?.length) {
       if(!options.attachmentsDir) throw new Error("Attachment storage is not configured");
       storeMessageAttachments(db,options.attachmentsDir,messageId,options.attachments,createdPaths);

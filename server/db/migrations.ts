@@ -123,4 +123,33 @@ export const migrations: Migration[] = [{
     CREATE INDEX website_sessions_account_visitor_idx ON website_chat_sessions(channel_account_id, visitor_id);
     CREATE INDEX website_sessions_expiry_idx ON website_chat_sessions(expires_at);
   `,
+}, {
+  version: 3,
+  name: "email_channel_account_ownership",
+  sql: `
+    ALTER TABLE channel_accounts ADD COLUMN owner_user_id TEXT;
+    CREATE INDEX channel_accounts_owner_idx ON channel_accounts(channel_type, owner_user_id);
+
+    UPDATE channel_accounts
+    SET owner_user_id = (
+      SELECT MIN(al.actor_user_id)
+      FROM audit_logs al
+      WHERE al.action = 'CHANNEL_CREATED'
+        AND al.entity_type = 'channel_account'
+        AND al.entity_id = channel_accounts.id
+        AND al.actor_user_id IS NOT NULL
+    )
+    WHERE channel_type = 'EMAIL'
+      AND owner_user_id IS NULL
+      AND (
+        SELECT COUNT(DISTINCT al.actor_user_id)
+        FROM audit_logs al
+        WHERE al.action = 'CHANNEL_CREATED'
+          AND al.entity_type = 'channel_account'
+          AND al.entity_id = channel_accounts.id
+          AND al.actor_user_id IS NOT NULL
+      ) = 1;
+
+    UPDATE channel_accounts SET owner_user_id = NULL WHERE channel_type <> 'EMAIL';
+  `,
 }];

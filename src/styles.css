@@ -19,6 +19,8 @@ body{min-height:0;overflow:hidden}
 .login-shell{height:100%;min-height:0;overflow:auto}
 .hub-shell{height:100vh;height:100dvh;min-height:0}
 .inbox-nav{min-height:0;overflow-y:auto;overscroll-behavior-y:contain}
+.nav-scope-badge{margin-left:auto;border-radius:999px;padding:2px 5px;font-size:7px;font-weight:700;line-height:1.2;white-space:nowrap;letter-spacing:0}.nav-scope-badge.shared{background:#e6e9e5;color:#69736e}.nav-scope-badge.personal{background:#e4eee9;color:#285b4c}.agent-attribution{display:block;margin-bottom:4px;color:#527066;font-size:9px;font-weight:700}
+@media(max-width:1100px){.inbox-nav nav button .nav-scope-badge{display:none}}
 .conversation-list{min-height:0;overflow:hidden}
 .conversation-scroll{min-height:0;flex:1 1 auto;overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain}
 .thread{min-width:0;min-height:0;max-width:100%;overflow:hidden}
